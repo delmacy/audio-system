@@ -272,3 +272,20 @@ button:focus-visible,input:focus-visible,select:focus-visible,[role=slider]:focu
 
 @media(max-width:1250px){.primitive-button-grid{grid-template-columns:repeat(3,minmax(190px,1fr))}}
 @media(max-width:950px){.primitive-button-grid{grid-template-columns:repeat(2,minmax(170px,1fr))}}
+
+
+/* Primitive catalog tabs */
+.primitive-tabs{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 20px;padding-bottom:14px;border-bottom:1px solid #e2e9f1}
+.primitive-tabs button{border:1px solid #d4e0ed;background:#fff;color:#4b607a;border-radius:8px;padding:8px 12px;font-size:12px;font-weight:700}
+.primitive-tabs button:hover{background:#f7fbff;border-color:#b9cfe7}
+.primitive-tabs button.active{background:#eaf4ff;border-color:#9fc8f4;color:#0f73e6}
+.primitive-subtitle{margin:6px 0 0;font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:#6f8299}
+
+/* Button motion variants */
+.primitive-button-motion-pulse{animation:primitiveButtonPulse 1.65s ease-in-out infinite}
+@keyframes primitiveButtonPulse{
+  0%,100%{transform:scale(1);box-shadow:0 0 0 0 color-mix(in srgb,var(--button-solid) 0%,transparent)}
+  50%{transform:scale(1.035);box-shadow:0 0 0 6px color-mix(in srgb,var(--button-solid) 13%,transparent)}
+}
+.primitive-button-motion-pulse:hover:not(:disabled){transform:scale(1.035)}
+@media(prefers-reduced-motion:reduce){.primitive-button-motion-pulse{animation:none}}
