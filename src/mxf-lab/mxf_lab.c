@@ -345,8 +345,6 @@ static gboolean inspect_bus_cb(GstBus *bus, GstMessage *msg, gpointer data) {
             break;
         }
         case GST_MESSAGE_EOS:
-            /* EOS is valid, but structural inspection normally finishes earlier
-             * on mxfdemux::no-more-pads. */
             if (!ctx->structural_complete) {
                 ctx->structural_complete =
                     (ctx->pads > 0 &&
@@ -367,10 +365,9 @@ static void no_more_pads_cb(GstElement *demux, gpointer user_data) {
     ctx->structural_complete =
         (ctx->pads > 0 &&
          (ctx->expected_pads == 0 || ctx->pads == ctx->expected_pads));
-    g_print("NO_MORE_PADS pads=%u expected=%u structural_complete=%s\n",
+    g_print("NO_MORE_PADS pads=%u expected=%u structural_complete=%s; waiting for EOS before teardown\n",
             ctx->pads, ctx->expected_pads,
             ctx->structural_complete ? "true" : "false");
-    g_main_loop_quit(ctx->loop);
 }
 
 static gboolean inspect_timeout_cb(gpointer user_data) {
@@ -464,9 +461,10 @@ static int inspect_mxf(const char *path, guint expected_pads, guint timeout_ms) 
     g_main_loop_run(loop);
     if (!ctx.timed_out && timeout_source != 0) g_source_remove(timeout_source);
 
-    /* no-more-pads is emitted only after mxfdemux finished the initial
-     * dynamic-pad construction. Teardown after that point avoids aborting
-     * metadata objects while they are still being constructed. */
+    /* no-more-pads confirms the dynamic track set, but MXF metadata objects
+     * may still be under construction. Wait for EOS/error/timeout before
+     * tearing down the pipeline to avoid GLib finalized-while-in-construction
+     * warnings from mxfdemux. */
     gst_element_set_state(pipeline, GST_STATE_NULL);
     gst_element_get_state(pipeline, NULL, NULL, 2 * GST_SECOND);
 
