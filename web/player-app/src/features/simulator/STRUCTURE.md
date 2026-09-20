@@ -1,32 +1,21 @@
 # Simulator frontend structure
 
-The simulator is organized by composition level instead of a generic `components/` folder.
+Reusable domain visuals live in `src/representations/`. The simulator only composes them.
 
 ```
-simulator/
-├─ elements/   # smallest reusable visual units
-├─ lists/      # repeated collections of elements/blocks
-├─ blocks/     # visual sections of a page
-├─ views/      # ordered page composition
-└─ model.ts    # types and demo/config data
+src/
+├─ representations/
+│  ├─ cwp/
+│  ├─ radio/
+│  ├─ telephone/
+│  ├─ recorder/
+│  └─ player/
+└─ features/simulator/
+   ├─ elements/   # generic simulator-only visual elements
+   ├─ lists/      # simulator-specific collections
+   ├─ blocks/     # page sections
+   ├─ views/      # ordered page composition
+   └─ model.ts
 ```
 
-## Composition chain
-
-```
-ServicePill
-  ├─ RadioList
-  └─ TelephoneList
-        ↓
-      CwpCard
-        ↓
-      CwpList
-        ↓
-      SideBlock
-        ↓
-SimulatorWorkspaceBlock
-        ↓
-    SimulatorView
-```
-
-The rule is that a view should preferably know blocks, not low-level elements.
+Rule: entity visuals belong to `representations/<entity>/`; a feature chooses the representation appropriate to its context.

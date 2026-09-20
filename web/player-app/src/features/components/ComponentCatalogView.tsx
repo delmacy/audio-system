@@ -1,8 +1,11 @@
 import { useState } from 'react'
 import { Activity, ClipboardList, Database, Radio } from 'lucide-react'
-import { CwpCard } from '@/features/simulator/blocks/CwpCard'
+import { CwpFull, CwpListItem, CwpSummary, CwpThumb } from '@/representations/cwp'
+import { RadioSummary } from '@/representations/radio'
+import { TelephoneSummary } from '@/representations/telephone'
+import { RecorderFull, RecorderStatus, RecorderSummary } from '@/representations/recorder'
+import { PlayerInline, PlayerMini } from '@/representations/player'
 import { EventsBlock } from '@/features/simulator/blocks/EventsBlock'
-import { RecorderTopologyBlock } from '@/features/simulator/blocks/RecorderTopologyBlock'
 import { SideBlock } from '@/features/simulator/blocks/SideBlock'
 import { ModeSwitch } from '@/features/simulator/elements/ModeSwitch'
 import { SummaryCard } from '@/features/simulator/elements/SummaryCard'
@@ -15,54 +18,72 @@ export function ComponentCatalogView({ mode, status, events }: {
 }) {
   const [previewMode, setPreviewMode] = useState<SimulatorMode>(mode)
   const [expanded, setExpanded] = useState<string[]>(['cwp-a01'])
+  const sample = SIM_CWPS[0]
+  const sampleRadio = sample[previewMode].services.find(service => service.kind === 'RADIO')!
+  const sampleTel = sample[previewMode].services.find(service => service.kind === 'TEL')!
 
   return <main className="component-catalog-main">
     <header className="component-catalog-header">
       <div>
-        <span className="catalog-eyebrow">Audio System · Frontend composition</span>
-        <h1>Catálogo de Componentes</h1>
-        <p>Os elementos abaixo são os componentes reais usados nas telas. Ajustes visuais aqui propagam para a aplicação.</p>
+        <span className="catalog-eyebrow">Audio System · visual representations</span>
+        <h1>Catálogo de Representações</h1>
+        <p>A mesma entidade pode ser Full, Summary, Thumb ou ListItem conforme a densidade exigida pela view.</p>
       </div>
       <ModeSwitch mode={previewMode} onChange={setPreviewMode} />
     </header>
 
     <div className="catalog-body">
       <section className="catalog-section">
-        <div className="catalog-section-title"><div><span>01</span><h2>Elementos · Status Cards</h2></div><p>Peças unitárias reutilizadas dentro dos blocos.</p></div>
+        <div className="catalog-section-title"><div><span>01</span><h2>CWP · múltiplas representações</h2></div><p>Uma entidade, várias densidades visuais.</p></div>
+        <div className="rep-showcase-stack">
+          <CwpSummary cwp={sample} mode={previewMode} />
+          <div className="rep-thumb-row"><CwpThumb cwp={sample} mode={previewMode} /><CwpThumb cwp={SIM_CWPS[1]} mode={previewMode} /></div>
+          <CwpListItem cwp={sample} mode={previewMode} />
+          <div className="catalog-isolated medium">
+            <CwpFull cwp={sample} mode={previewMode} expanded={expanded.includes(sample.id)}
+              onToggle={() => setExpanded(expanded.includes(sample.id) ? [] : [sample.id])} />
+          </div>
+        </div>
+      </section>
+
+      <section className="catalog-section">
+        <div className="catalog-section-title"><div><span>02</span><h2>Rádio e telefone</h2></div><p>Representações reutilizáveis fora do Simulator.</p></div>
+        <div className="rep-showcase-stack">
+          <RadioSummary radio={sampleRadio} />
+          <TelephoneSummary telephone={sampleTel} />
+        </div>
+      </section>
+
+      <section className="catalog-section">
+        <div className="catalog-section-title"><div><span>03</span><h2>Recorder</h2></div><p>Status compacto, summary e visual completo.</p></div>
+        <div className="rep-showcase-stack">
+          <RecorderStatus />
+          <RecorderSummary status={status} />
+          <div className="catalog-isolated recorder-preview"><RecorderFull mode={previewMode} status={status} /></div>
+        </div>
+      </section>
+
+      <section className="catalog-section">
+        <div className="catalog-section-title"><div><span>04</span><h2>Player</h2></div><p>Representações compactas para uso em listas, modais e cards.</p></div>
+        <div className="rep-showcase-stack">
+          <PlayerMini current="01:23" duration="04:50" />
+          <PlayerInline label="TWR 121.500 · gravação selecionada" />
+        </div>
+      </section>
+
+      <section className="catalog-section">
+        <div className="catalog-section-title"><div><span>05</span><h2>Blocos compostos</h2></div><p>As features montam representações conforme a necessidade.</p></div>
+        <div className="catalog-isolated wide"><SideBlock side="A" mode={previewMode} expanded={expanded} setExpanded={setExpanded} /></div>
+        <div className="catalog-isolated events-preview"><EventsBlock events={events.slice(0, 6)} /></div>
+      </section>
+
+      <section className="catalog-section">
+        <div className="catalog-section-title"><div><span>06</span><h2>Elementos genéricos</h2></div><p>Peças não vinculadas a uma entidade específica.</p></div>
         <div className="catalog-summary-grid">
           <SummaryCard icon={ClipboardList} title="CWP's" value="4" detail="ativos de 4" />
           <SummaryCard icon={Radio} title="Rádios" value="8" detail="ativos de 8" tone="green" />
           <SummaryCard icon={Database} title="Serviços Total" value="16" detail="ativos" tone="green" />
           <SummaryCard icon={Activity} title="Duração" value="00:30:00" detail="pronto" tone="orange" />
-        </div>
-      </section>
-
-      <section className="catalog-section">
-        <div className="catalog-section-title"><div><span>02</span><h2>Bloco · CWP Card</h2></div><p>Compõe listas de rádio e telefone.</p></div>
-        <div className="catalog-isolated medium">
-          <CwpCard cwp={SIM_CWPS[0]} mode={previewMode} expanded={expanded.includes('cwp-a01')}
-            onToggle={() => setExpanded(expanded.includes('cwp-a01') ? [] : ['cwp-a01'])} />
-        </div>
-      </section>
-
-      <section className="catalog-section">
-        <div className="catalog-section-title"><div><span>03</span><h2>Bloco · Side A</h2></div><p>Compõe a lista de CWPs de um lado operacional.</p></div>
-        <div className="catalog-isolated wide">
-          <SideBlock side="A" mode={previewMode} expanded={expanded} setExpanded={setExpanded} />
-        </div>
-      </section>
-
-      <section className="catalog-section">
-        <div className="catalog-section-title"><div><span>04</span><h2>Bloco · Recorder</h2></div><p>Topologia real do frontend: Recorder e Gateway SIP.</p></div>
-        <div className="catalog-isolated recorder-preview">
-          <RecorderTopologyBlock mode={previewMode} status={status} />
-        </div>
-      </section>
-
-      <section className="catalog-section">
-        <div className="catalog-section-title"><div><span>05</span><h2>Bloco · Status e eventos</h2></div><p>Live Status, console de eventos e métricas.</p></div>
-        <div className="catalog-isolated events-preview">
-          <EventsBlock events={events.slice(0, 6)} />
         </div>
       </section>
     </div>

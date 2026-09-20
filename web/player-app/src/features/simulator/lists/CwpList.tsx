@@ -1,4 +1,4 @@
-import { CwpCard } from '../blocks/CwpCard'
+import { CwpFull } from '@/representations/cwp'
 import type { CwpConfig, SimulatorMode } from '../model'
 
 export function CwpList({ cwps, mode, expanded, setExpanded }: {
@@ -8,7 +8,7 @@ export function CwpList({ cwps, mode, expanded, setExpanded }: {
   setExpanded: (next: string[]) => void
 }) {
   return <div className="cwp-list">
-    {cwps.map(cwp => <CwpCard
+    {cwps.map(cwp => <CwpFull
       key={cwp.id}
       cwp={cwp}
       mode={mode}

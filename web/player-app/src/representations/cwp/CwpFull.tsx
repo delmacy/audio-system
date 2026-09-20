@@ -1,9 +1,9 @@
 import { ChevronRight, FileText, Monitor, Wrench } from 'lucide-react'
-import { RadioList } from '../lists/RadioList'
-import { TelephoneList } from '../lists/TelephoneList'
-import type { CwpConfig, SimulatorMode } from '../model'
+import { RadioPillList } from '@/representations/radio/RadioPillList'
+import { TelephonePillList } from '@/representations/telephone/TelephonePillList'
+import type { CwpConfig, SimulatorMode } from '@/features/simulator/model'
 
-export function CwpCard({ cwp, mode, expanded, onToggle }: {
+export function CwpFull({ cwp, mode, expanded, onToggle }: {
   cwp: CwpConfig
   mode: SimulatorMode
   expanded: boolean
@@ -25,8 +25,8 @@ export function CwpCard({ cwp, mode, expanded, onToggle }: {
     </div>
 
     <div className="cwp-services">
-      <RadioList services={config.services} />
-      <TelephoneList services={config.services} />
+      <RadioPillList services={config.services} />
+      <TelephonePillList services={config.services} />
     </div>
 
     {expanded && <div className="cwp-config-panel">
