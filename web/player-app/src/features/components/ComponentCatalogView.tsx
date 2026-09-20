@@ -11,9 +11,10 @@ import { SummaryCard } from '@/features/simulator/elements/SummaryCard'
 import { PrimitiveCatalogSection } from '@/features/components/PrimitiveCatalogSection'
 import { BlockPrimitiveCatalogSection } from '@/features/components/BlockPrimitiveCatalogSection'
 import { ShadcnCatalogSection } from '@/features/components/ShadcnCatalogSection'
+import { FormPrimitiveCatalogSection } from '@/features/components/FormPrimitiveCatalogSection'
 import { SIM_CWPS, type SimStatus, type SimulatorMode } from '@/features/simulator/model'
 
-type CatalogTab = 'cwp' | 'radios' | 'telephones' | 'recorder' | 'sip' | 'player' | 'primitives' | 'shadcn' | 'blocks' | 'elements'
+type CatalogTab = 'cwp' | 'radios' | 'telephones' | 'recorder' | 'sip' | 'player' | 'primitives' | 'fields' | 'shadcn' | 'blocks' | 'elements'
 
 const CATALOG_TABS: { id: CatalogTab; label: string }[] = [
   { id: 'cwp', label: 'CWP' },
@@ -23,6 +24,7 @@ const CATALOG_TABS: { id: CatalogTab; label: string }[] = [
   { id: 'sip', label: 'SIP' },
   { id: 'player', label: 'Player' },
   { id: 'primitives', label: 'Primitivos' },
+  { id: 'fields', label: 'Fields' },
   { id: 'shadcn', label: 'shadcn/UI' },
   { id: 'blocks', label: 'Blocos' },
   { id: 'elements', label: 'Elementos' },
@@ -153,9 +155,11 @@ export function ComponentCatalogView({ mode, status, events }: {
 
       {catalogTab === 'primitives' && <PrimitiveCatalogSection number="07" />}
 
-      {catalogTab === 'shadcn' && <ShadcnCatalogSection number="08" />}
+      {catalogTab === 'fields' && <FormPrimitiveCatalogSection number="08" />}
 
-      {catalogTab === 'blocks' && <BlockPrimitiveCatalogSection number="09" />}
+      {catalogTab === 'shadcn' && <ShadcnCatalogSection number="09" />}
+
+      {catalogTab === 'blocks' && <BlockPrimitiveCatalogSection number="10" />}
 
       {catalogTab === 'elements' && <section className="catalog-section">
         <div className="catalog-section-title"><div><span>11</span><h2>Elementos genéricos</h2></div><p>Peças não vinculadas a uma entidade específica.</p></div>
