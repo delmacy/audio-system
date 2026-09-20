@@ -1,14 +1,14 @@
 import { Network, Server } from 'lucide-react'
 import type { SimStatus, SimulatorMode } from '@/features/simulator/model'
 
-export function RecorderFull({ mode, status }: { mode: SimulatorMode; status: SimStatus }) {
+export function RecorderFull({ mode, status, displayName = 'Gravador' }: { mode: SimulatorMode; status: SimStatus; displayName?: string }) {
   const recording = mode === 'capture'
     ? 'Capturando do gravador corrente'
     : status === 'running' ? 'Gravando simulação' : 'Pronto para simulação'
 
   return <section className="recorder-column" aria-label="Gravador e Gateway">
     <div className="recorder-card central">
-      <Server size={30} /><strong>Gravador</strong><small><i className="status-dot" />Online</small>
+      <Server size={30} /><strong>{displayName}</strong><small><i className="status-dot" />Online</small>
       <dl>
         <div><dt>IP</dt><dd>10.10.0.10</dd></div>
         <div><dt>RTSP</dt><dd>8554</dd></div>
