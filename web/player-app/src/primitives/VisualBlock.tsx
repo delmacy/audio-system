@@ -1,22 +1,19 @@
-export type BlockColor = 'blue' | 'gray' | 'red' | 'green' | 'yellow' | 'purple'
-export type BlockFill = 'white' | 'blue' | 'gray' | 'red' | 'green' | 'yellow' | 'purple'
-export type BlockMotion = 'static' | 'pulse'
+export type BlockColor = 'white' | 'black' | 'gray' | 'blue' | 'green' | 'yellow' | 'red' | 'purple'
+export type BlockMotion = 'static' | 'pulse' | 'fill-pulse'
 
-export const BLOCK_COLORS: BlockColor[] = ['blue', 'gray', 'red', 'green', 'yellow', 'purple']
-export const BLOCK_FILLS: BlockFill[] = ['white', 'blue', 'gray', 'red', 'green', 'yellow', 'purple']
+export const BLOCK_COLORS: BlockColor[] = ['white', 'black', 'gray', 'blue', 'green', 'yellow', 'red', 'purple']
+export const BLOCK_MOTIONS: BlockMotion[] = ['static', 'pulse', 'fill-pulse']
 
 export function VisualBlock({
-  borderColor,
-  fillColor,
+  color,
   motion = 'static',
   label,
 }: {
-  borderColor: BlockColor
-  fillColor: BlockFill
+  color: BlockColor
   motion?: BlockMotion
   label?: string
 }) {
-  return <div className={`primitive-block primitive-block-border-${borderColor} primitive-block-fill-${fillColor} primitive-block-motion-${motion}`}>
+  return <div className={`primitive-block primitive-block-${color} primitive-block-motion-${motion}`}>
     <span>{label ?? 'block'}</span>
   </div>
 }

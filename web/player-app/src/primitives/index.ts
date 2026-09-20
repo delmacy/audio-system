@@ -15,4 +15,4 @@ export {
 
 export { PrimitiveButton, type PrimitiveButtonColor, type PrimitiveButtonVariant, type PrimitiveButtonSize, type PrimitiveButtonMotion, type PrimitiveButtonIcon } from './PrimitiveButton'
 
-export { VisualBlock, BLOCK_COLORS, BLOCK_FILLS, type BlockColor, type BlockFill, type BlockMotion } from './VisualBlock'
+export { VisualBlock, BLOCK_COLORS, BLOCK_MOTIONS, type BlockColor, type BlockMotion } from './VisualBlock'
