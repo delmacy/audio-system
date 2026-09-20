@@ -1,0 +1,47 @@
+{
+  "schema": "audio-system.multi-track-audio-injection-config.v1",
+  "tracks": [
+    {
+      "name": "radio-121500",
+      "source_audio": "../../media-bank/radio/controller/controller_005_39.13-44.69.wav",
+      "local_ip": "10.20.1.101",
+      "recorder_ip": "10.20.0.10",
+      "rtsp_port": 8554,
+      "recorder_rtp_port": 20000,
+      "local_rtp_port": 21100,
+      "endpoint_id": "CWP-LAB-01",
+      "service_id": "121500",
+      "service_type": "radio",
+      "burst_count": 1,
+      "burst_ms": 5000
+    },
+    {
+      "name": "radio-118700",
+      "source_audio": "../../media-bank/radio/pilot/pilot_006_49.94-52.96.wav",
+      "local_ip": "10.20.1.101",
+      "recorder_ip": "10.20.0.10",
+      "rtsp_port": 8554,
+      "recorder_rtp_port": 20001,
+      "local_rtp_port": 21101,
+      "endpoint_id": "CWP-LAB-01",
+      "service_id": "118700",
+      "service_type": "radio",
+      "burst_count": 1,
+      "burst_ms": 3000
+    },
+    {
+      "name": "tel-050",
+      "source_audio": "../../media-bank/telephone/conversations/example.wav",
+      "local_ip": "10.20.1.101",
+      "recorder_ip": "10.20.0.10",
+      "rtsp_port": 8554,
+      "recorder_rtp_port": 20002,
+      "local_rtp_port": 21102,
+      "endpoint_id": "CWP-LAB-01",
+      "service_id": "050",
+      "service_type": "telephone",
+      "burst_count": 1,
+      "burst_ms": 5000
+    }
+  ]
+}
