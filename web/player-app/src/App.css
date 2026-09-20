@@ -706,3 +706,28 @@ button:focus-visible,input:focus-visible,select:focus-visible,[role=slider]:focu
   .timeline-ruler-zoom-controls{width:100%;min-width:0}
   .timeline-ruler-window-label small{display:none}
 }
+
+
+/* Smooth timeline navigation */
+.timeline-ruler-zoom-axis{
+  cursor:grab;
+  user-select:none;
+  touch-action:pan-y;
+}
+.timeline-ruler-zoom-axis.dragging{
+  cursor:grabbing;
+}
+.timeline-ruler-zoom-axis i{
+  transition:left .08s linear,height .12s ease,opacity .12s ease;
+  pointer-events:none;
+}
+.timeline-ruler-zoom-axis i span{
+  transition:opacity .12s ease;
+}
+.timeline-ruler-zoom-controls input{
+  cursor:ew-resize;
+}
+.timeline-ruler-zoom-controls button:disabled{
+  opacity:.38;
+  cursor:not-allowed;
+}
