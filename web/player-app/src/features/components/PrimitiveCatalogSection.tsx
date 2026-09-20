@@ -17,6 +17,8 @@ import {
   type PrimitiveButtonVariant,
   type PrimitiveButtonSize,
   type PrimitiveButtonIcon,
+  DataSourceStatus,
+  DataProbe,
 } from '@/primitives'
 
 type PrimitiveSpec = {
@@ -40,7 +42,7 @@ const BUTTON_VARIANTS: PrimitiveButtonVariant[] = ['solid', 'outline', 'ghost']
 const BUTTON_SIZES: PrimitiveButtonSize[] = ['sm', 'md', 'lg']
 const BUTTON_ICONS: PrimitiveButtonIcon[] = ['plus', 'x', 'play', 'pause', 'square', 'download', 'alert_triangle']
 
-type PrimitiveTab = 'buttons' | 'status' | 'labels' | 'metrics'
+type PrimitiveTab = 'buttons' | 'status' | 'labels' | 'metrics' | 'data'
 
 function ButtonPrimitiveCatalog() {
   return <section className="primitive-family">
@@ -123,6 +125,7 @@ export function PrimitiveCatalogSection({ number }: { number: string }) {
       <button type="button" className={tab === 'status' ? 'active' : ''} onClick={() => setTab('status')}>Status</button>
       <button type="button" className={tab === 'labels' ? 'active' : ''} onClick={() => setTab('labels')}>Badges · Tags · Chips</button>
       <button type="button" className={tab === 'metrics' ? 'active' : ''} onClick={() => setTab('metrics')}>Métricas · Headers</button>
+      <button type="button" className={tab === 'data' ? 'active' : ''} onClick={() => setTab('data')}>Data</button>
     </nav>
 
     <div className="primitive-catalog-stack">
@@ -130,6 +133,19 @@ export function PrimitiveCatalogSection({ number }: { number: string }) {
       {tab === 'status' && <PrimitiveFamilies group="status" />}
       {tab === 'labels' && <PrimitiveFamilies group="labels" />}
       {tab === 'metrics' && <PrimitiveFamilies group="metrics" />}
+      {tab === 'data' && <section className="primitive-family">
+        <header><strong>data diagnostics</strong><small>estado da fonte e contagem RAW → DTO → UI</small></header>
+        <div className="primitive-variant-grid">
+          {(['connected','loading','empty','stale','error'] as const).map(state => <article className="primitive-specimen" id={`data_source_status_${state}`} key={state}>
+            <div className="primitive-specimen-preview"><DataSourceStatus state={state} source="timeline-api" detail={state} updatedAt="16:42:13" /></div>
+            <code>{`data_source_status_${state}`}</code>
+          </article>)}
+          <article className="primitive-specimen" id="data_probe">
+            <div className="primitive-specimen-preview"><DataProbe rawCount={27} dtoCount={27} renderedCount={27} discardedCount={0} /></div>
+            <code>data_probe</code>
+          </article>
+        </div>
+      </section>}
     </div>
   </section>
 }
