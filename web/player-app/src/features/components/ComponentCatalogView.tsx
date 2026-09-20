@@ -14,6 +14,20 @@ import { SummaryCard } from '@/features/simulator/elements/SummaryCard'
 import { PrimitiveCatalogSection } from '@/features/components/PrimitiveCatalogSection'
 import { SIM_CWPS, type SimStatus, type SimulatorMode } from '@/features/simulator/model'
 
+type CatalogTab = 'cwp' | 'radios' | 'telephones' | 'recorder' | 'sip' | 'player' | 'primitives' | 'blocks' | 'elements'
+
+const CATALOG_TABS: { id: CatalogTab; label: string }[] = [
+  { id: 'cwp', label: 'CWP' },
+  { id: 'radios', label: 'Rádios' },
+  { id: 'telephones', label: 'Telefones' },
+  { id: 'recorder', label: 'Recorder' },
+  { id: 'sip', label: 'SIP' },
+  { id: 'player', label: 'Player' },
+  { id: 'primitives', label: 'Primitivos' },
+  { id: 'blocks', label: 'Blocos' },
+  { id: 'elements', label: 'Elementos' },
+]
+
 export function ComponentCatalogView({ mode, status, events }: {
   mode: SimulatorMode
   status: SimStatus
@@ -22,18 +36,23 @@ export function ComponentCatalogView({ mode, status, events }: {
   const [previewMode, setPreviewMode] = useState<SimulatorMode>(mode)
   const [expanded, setExpanded] = useState<string[]>(['cwp-a01'])
   const [previewStatus, setPreviewStatus] = useState<SimStatus>(status)
+  const [catalogTab, setCatalogTab] = useState<CatalogTab>('cwp')
+
   const sample = SIM_CWPS[0]
   const sampleRadio = sample[previewMode].services.find(service => service.kind === 'RADIO')!
   const sampleTel = sample[previewMode].services.find(service => service.kind === 'TEL')!
+
   const cwpFull = { ...sample, label: 'CWP_full' }
   const cwpSummary = { ...sample, label: 'CWP_summary' }
   const cwpThumb = { ...sample, label: 'CWP_thumb' }
   const cwpThumbEdit = { ...sample, label: 'CWP_thumb_edit' }
   const cwpListItem = { ...sample, label: 'CWP_list_item' }
+
   const radioFull = { ...sampleRadio, label: 'RADIO_full' }
   const radioSummary = { ...sampleRadio, label: 'RADIO_summary' }
   const radioThumb = { ...sampleRadio, label: 'RADIO_thumb' }
   const radioThumbEdit = { ...sampleRadio, label: 'RADIO_thumb_edit' }
+
   const telephoneFull = { ...sampleTel, label: 'TELEPHONE_full' }
   const telephoneSummary = { ...sampleTel, label: 'TELEPHONE_summary' }
   const telephoneThumb = { ...sampleTel, label: 'TELEPHONE_thumb' }
@@ -44,13 +63,22 @@ export function ComponentCatalogView({ mode, status, events }: {
       <div>
         <span className="catalog-eyebrow">Audio System · visual representations</span>
         <h1>Catálogo de Representações</h1>
-        <p>A mesma entidade pode ser Full, Summary, Thumb ou ListItem conforme a densidade exigida pela view.</p>
+        <p>Entidades, blocos e primitivos isolados para composição e refinamento visual.</p>
       </div>
       <ModeSwitch mode={previewMode} onChange={setPreviewMode} />
     </header>
 
+    <nav className="catalog-primary-tabs" aria-label="Famílias de componentes">
+      {CATALOG_TABS.map(tab => <button
+        type="button"
+        key={tab.id}
+        className={catalogTab === tab.id ? 'active' : ''}
+        onClick={() => setCatalogTab(tab.id)}
+      >{tab.label}</button>)}
+    </nav>
+
     <div className="catalog-body">
-      <section className="catalog-section">
+      {catalogTab === 'cwp' && <section className="catalog-section">
         <div className="catalog-section-title"><div><span>01</span><h2>CWP · múltiplas representações</h2></div><p>Uma entidade, várias densidades visuais.</p></div>
         <div className="rep-showcase-stack">
           <CwpSummary cwp={cwpSummary} mode={previewMode} />
@@ -64,10 +92,10 @@ export function ComponentCatalogView({ mode, status, events }: {
               onToggle={() => setExpanded(expanded.includes(sample.id) ? [] : [sample.id])} />
           </div>
         </div>
-      </section>
+      </section>}
 
-      <section className="catalog-section">
-        <div className="catalog-section-title"><div><span>02</span><h2>Rádio e telefone</h2></div><p>Representações reutilizáveis fora do Simulator.</p></div>
+      {catalogTab === 'radios' && <section className="catalog-section">
+        <div className="catalog-section-title"><div><span>02</span><h2>Rádios</h2></div><p>Representações operacionais e editáveis da entidade rádio.</p></div>
         <div className="rep-showcase-stack">
           <div className="rep-thumb-row">
             <RadioThumb radio={radioThumb} />
@@ -75,7 +103,12 @@ export function ComponentCatalogView({ mode, status, events }: {
           </div>
           <RadioSummary radio={radioSummary} />
           <div className="catalog-isolated medium"><RadioFull radio={radioFull} /></div>
+        </div>
+      </section>}
 
+      {catalogTab === 'telephones' && <section className="catalog-section">
+        <div className="catalog-section-title"><div><span>03</span><h2>Telefones</h2></div><p>Representações operacionais e editáveis da entidade telefone.</p></div>
+        <div className="rep-showcase-stack">
           <div className="rep-thumb-row">
             <TelephoneThumb telephone={telephoneThumb} />
             <TelephoneThumbEdit telephone={telephoneThumbEdit} />
@@ -83,10 +116,10 @@ export function ComponentCatalogView({ mode, status, events }: {
           <TelephoneSummary telephone={telephoneSummary} />
           <div className="catalog-isolated medium"><TelephoneFull telephone={telephoneFull} /></div>
         </div>
-      </section>
+      </section>}
 
-      <section className="catalog-section">
-        <div className="catalog-section-title"><div><span>03</span><h2>Recorder</h2></div><p>Status compacto, summary e visual completo.</p></div>
+      {catalogTab === 'recorder' && <section className="catalog-section">
+        <div className="catalog-section-title"><div><span>04</span><h2>Recorder</h2></div><p>Core de gravação em múltiplas densidades.</p></div>
         <div className="rep-showcase-stack">
           <div className="rep-thumb-row">
             <RecorderThumb status={status} displayName="RECORDER_thumb" />
@@ -96,10 +129,10 @@ export function ComponentCatalogView({ mode, status, events }: {
           <RecorderSummary status={status} displayName="RECORDER_summary" />
           <div className="catalog-isolated recorder-preview"><RecorderFull mode={previewMode} status={status} displayName="RECORDER_full" /></div>
         </div>
-      </section>
+      </section>}
 
-      <section className="catalog-section">
-        <div className="catalog-section-title"><div><span>04</span><h2>Gateway SIP</h2></div><p>Entidade própria de sinalização e tradução, separada do Recorder.</p></div>
+      {catalogTab === 'sip' && <section className="catalog-section">
+        <div className="catalog-section-title"><div><span>05</span><h2>Gateway SIP</h2></div><p>Entidade própria de sinalização e tradução.</p></div>
         <div className="rep-showcase-stack">
           <div className="rep-thumb-row">
             <SipThumb displayName="SIP_thumb" />
@@ -109,48 +142,50 @@ export function ComponentCatalogView({ mode, status, events }: {
           <SipSummary displayName="SIP_summary" />
           <div className="catalog-isolated medium"><SipFull displayName="SIP_full" /></div>
         </div>
-      </section>
+      </section>}
 
-      <section className="catalog-section">
-        <div className="catalog-section-title"><div><span>05</span><h2>Player</h2></div><p>Representações compactas para uso em listas, modais e cards.</p></div>
+      {catalogTab === 'player' && <section className="catalog-section">
+        <div className="catalog-section-title"><div><span>06</span><h2>Player</h2></div><p>Representações compactas reutilizáveis.</p></div>
         <div className="rep-showcase-stack">
           <PlayerMini label="PLAYER_mini" current="01:23" duration="04:50" />
           <PlayerInline label="PLAYER_inline" />
         </div>
-      </section>
+      </section>}
 
-      <section className="catalog-section">
-        <div className="catalog-section-title"><div><span>06</span><h2>Barra de Simulação</h2></div><p>Bloco operacional isolado, com estado local apenas para revisão visual.</p></div>
-        <div className="catalog-action-bar-preview">
-          <SimulatorActionBarBlock
-            mode={previewMode}
-            status={previewStatus}
-            onStart={() => setPreviewStatus('running')}
-            onPause={() => setPreviewStatus('paused')}
-            onStop={() => setPreviewStatus('stopped')}
-            onFault={() => setPreviewStatus('running')}
-            openPlayer={() => undefined}
-          />
-        </div>
-      </section>
+      {catalogTab === 'primitives' && <PrimitiveCatalogSection number="07" />}
 
-      <section className="catalog-section">
-        <div className="catalog-section-title"><div><span>07</span><h2>Blocos compostos</h2></div><p>As features montam representações conforme a necessidade.</p></div>
-        <div className="catalog-isolated wide"><SideBlock side="A" mode={previewMode} expanded={expanded} setExpanded={setExpanded} /></div>
-        <div className="catalog-isolated events-preview"><EventsBlock events={events.slice(0, 6)} /></div>
-      </section>
+      {catalogTab === 'blocks' && <>
+        <section className="catalog-section">
+          <div className="catalog-section-title"><div><span>08</span><h2>Barra de Simulação</h2></div><p>Bloco operacional isolado e interativo.</p></div>
+          <div className="catalog-action-bar-preview">
+            <SimulatorActionBarBlock
+              mode={previewMode}
+              status={previewStatus}
+              onStart={() => setPreviewStatus('running')}
+              onPause={() => setPreviewStatus('paused')}
+              onStop={() => setPreviewStatus('stopped')}
+              onFault={() => setPreviewStatus('running')}
+              openPlayer={() => undefined}
+            />
+          </div>
+        </section>
 
-      <PrimitiveCatalogSection number="08" />
+        <section className="catalog-section">
+          <div className="catalog-section-title"><div><span>09</span><h2>Blocos compostos</h2></div><p>Composições maiores usadas pelas views.</p></div>
+          <div className="catalog-isolated wide"><SideBlock side="A" mode={previewMode} expanded={expanded} setExpanded={setExpanded} /></div>
+          <div className="catalog-isolated events-preview"><EventsBlock events={events.slice(0, 6)} /></div>
+        </section>
+      </>}
 
-      <section className="catalog-section">
-        <div className="catalog-section-title"><div><span>09</span><h2>Elementos genéricos</h2></div><p>Peças não vinculadas a uma entidade específica.</p></div>
+      {catalogTab === 'elements' && <section className="catalog-section">
+        <div className="catalog-section-title"><div><span>10</span><h2>Elementos genéricos</h2></div><p>Peças não vinculadas a uma entidade específica.</p></div>
         <div className="catalog-summary-grid">
           <SummaryCard icon={ClipboardList} title="CWP's" value="4" detail="ativos de 4" />
           <SummaryCard icon={Radio} title="Rádios" value="8" detail="ativos de 8" tone="green" />
           <SummaryCard icon={Database} title="Serviços Total" value="16" detail="ativos" tone="green" />
           <SummaryCard icon={Activity} title="Duração" value="00:30:00" detail="pronto" tone="orange" />
         </div>
-      </section>
+      </section>}
     </div>
   </main>
 }
