@@ -77,6 +77,37 @@ def index_intervals(day: str) -> list[dict]:
     return result
 
 
+def _operational_track_intervals(run: Path, track_state: dict, events: list[dict], ordinal: int) -> list[dict]:
+    mxf = Path(track_state["final_mxf"]).resolve()
+    if mxf.parent != run.resolve() or mxf.suffix.lower() != ".mxf" or not mxf.is_file():
+        return []
+    track = track_state["logical_track_uuid"]
+    instance = track_state["track_instance_uuid"]
+    matching = [e for e in events if e.get("logical_track_uuid") == track and e.get("track_instance_uuid") == instance]
+    kinds = {e.get("event") for e in matching}
+    if not {"WINDOW_CLOSED_COMPLETE", "MEDIA_COMMIT"}.issubset(kinds):
+        return []
+    opened = None
+    items = []
+    for event in matching:
+        if event.get("event") == "MEDIA_START":
+            opened = event.get("ts_utc")
+        elif event.get("event") == "MEDIA_END" and opened:
+            end = event.get("ts_utc")
+            if parse_utc(end) > parse_utc(opened):
+                items.append({
+                    "id": f"{run.name}-{ordinal}-{len(items)}",
+                    "start_utc": opened, "end_utc": end,
+                    "logical_track_uuid": track, "track_instance_uuid": instance,
+                    "service_type": track_state.get("service_type", "radio"),
+                    "service_id": track_state["service_id"],
+                    "endpoint_id": track_state["endpoint_id"],
+                    "source": "closed_mxf_recorder_audit_unindexed",
+                })
+            opened = None
+    return items
+
+
 def operational_intervals(day: str) -> list[dict]:
     directory = ROOT / "runs" / "operational-recorder"
     if not directory.is_dir():
@@ -93,35 +124,19 @@ def operational_intervals(day: str) -> list[dict]:
             continue
         try:
             state = json.loads(state_file.read_text(encoding="utf-8-sig"))
-            mxf = Path(state["final_mxf"]).resolve()
-            if mxf.parent != run.resolve() or mxf.suffix.lower() != ".mxf" or not mxf.is_file():
-                continue
-            track, instance = state["logical_track_uuid"], state["track_instance_uuid"]
             events = [json.loads(line) for line in audit_file.read_text(encoding="utf-8").splitlines() if line.strip()]
-            matching = [e for e in events if e.get("logical_track_uuid") == track and e.get("track_instance_uuid") == instance]
-            kinds = {e.get("event") for e in matching}
-            if not {"WINDOW_CLOSED_COMPLETE", "MEDIA_COMMIT"}.issubset(kinds):
-                continue
-            opened = None
+            if isinstance(state.get("tracks"), list):
+                track_states = state["tracks"]
+            else:
+                track_states = [state]
             run_items = []
-            for event in matching:
-                if event.get("event") == "MEDIA_START":
-                    opened = event.get("ts_utc")
-                elif event.get("event") == "MEDIA_END" and opened:
-                    end = event.get("ts_utc")
-                    if parse_utc(end) > parse_utc(opened):
-                        run_items.append({"id": f"{run.name}-{len(run_items)}", "start_utc": opened,
-                                       "end_utc": end, "logical_track_uuid": track,
-                                       "track_instance_uuid": instance, "service_type": "radio",
-                                       "service_id": state["service_id"], "endpoint_id": state["endpoint_id"],
-                                       "source": "closed_mxf_recorder_audit_unindexed"})
-                    opened = None
+            for ordinal, track_state in enumerate(track_states):
+                run_items.extend(_operational_track_intervals(run, track_state, events, ordinal))
             RUN_INTERVAL_CACHE[run.name] = run_items
             result.extend(run_items)
         except (OSError, ValueError, KeyError, json.JSONDecodeError):
             continue
     return result
-
 
 def build_timeline(date: str | None = None, start: str | None = None) -> dict:
     if date is None:
