@@ -289,3 +289,39 @@ button:focus-visible,input:focus-visible,select:focus-visible,[role=slider]:focu
 }
 .primitive-button-motion-pulse:hover:not(:disabled){transform:scale(1.035)}
 @media(prefers-reduced-motion:reduce){.primitive-button-motion-pulse{animation:none}}
+
+
+/* Primary component catalog tabs */
+.catalog-primary-tabs{
+  position:sticky;
+  top:86px;
+  z-index:25;
+  display:flex;
+  gap:8px;
+  padding:10px 30px;
+  overflow-x:auto;
+  background:rgba(248,251,255,.97);
+  border-bottom:1px solid #dbe5f0;
+  backdrop-filter:blur(10px);
+  scrollbar-width:thin;
+}
+.catalog-primary-tabs button{
+  flex:0 0 auto;
+  border:1px solid #d5e0ed;
+  background:#fff;
+  color:#425a76;
+  border-radius:8px;
+  padding:8px 12px;
+  font-size:12px;
+  font-weight:720;
+  white-space:nowrap;
+}
+.catalog-primary-tabs button:hover{background:#f4f9ff;border-color:#b9cee6}
+.catalog-primary-tabs button.active{
+  background:#eaf4ff;
+  border-color:#9fc8f4;
+  color:#0f73e6;
+}
+@media(max-width:1100px){
+  .catalog-primary-tabs{top:122px;padding-left:18px;padding-right:18px}
+}
