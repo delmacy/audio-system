@@ -17,23 +17,66 @@ function countTracks(data: TimelineData) {
   return data.groups.reduce((sum, group) => sum + group.tracks.length, 0)
 }
 
+function windowMinutes(data: TimelineData) {
+  const start = Date.parse(data.windowStartUtc)
+  const end = Date.parse(data.windowEndUtc)
+  return Number.isFinite(start) && Number.isFinite(end) && end > start ? (end - start) / 60000 : 1
+}
+
+function TimelineObservedPreview({ data }: { data: TimelineData }) {
+  const duration = windowMinutes(data)
+  const tracks = data.groups.flatMap(group =>
+    group.tracks.map(track => ({ group: group.label, kind: group.kind, track }))
+  )
+
+  return <div className="timeline-observed-preview" id="timeline_observed_preview">
+    <div className="timeline-observed-preview-head">
+      <strong>UI renderizada</strong>
+      <span>{tracks.length} tracks · {countSegments(data)} clips</span>
+    </div>
+
+    {tracks.length === 0 ? (
+      <div className="timeline-observed-empty">Nenhum intervalo de mídia nesta janela.</div>
+    ) : (
+      <div className="timeline-observed-tracks">
+        {tracks.map(({ group, kind, track }) => <div className="timeline-observed-track" key={track.id}>
+          <div className="timeline-observed-label">
+            <small>{kind} · {group}</small>
+            <strong>{track.label}</strong>
+          </div>
+          <div className="timeline-observed-lane">
+            {track.segments.map(segment => {
+              const left = Math.max(0, Math.min(100, (segment.start / duration) * 100))
+              const width = Math.max(.35, Math.min(100 - left, ((segment.end - segment.start) / duration) * 100))
+              return <span
+                key={segment.id}
+                className={`timeline-observed-clip ${segment.source === 'sqlite_closed_mxf' ? 'indexed' : 'audit'}`}
+                style={{ left: `${left}%`, width: `${width}%` }}
+                title={`${track.label} · ${segment.startUtc} → ${segment.endUtc} · ${segment.source}`}
+              />
+            })}
+          </div>
+        </div>)}
+      </div>
+    )}
+  </div>
+}
+
 export function TimelineDataLab() {
   const [source, setSource] = useState<SourceMode>('fixture')
   const [state, setState] = useState<LoadState>('connected')
   const [data, setData] = useState<TimelineData>(DEMO_TIMELINE)
-  const [raw, setRaw] = useState<unknown>(null)
+  const [raw, setRaw] = useState<unknown>(DEMO_TIMELINE)
   const [error, setError] = useState<string | null>(null)
   const [updatedAt, setUpdatedAt] = useState<string | null>(null)
 
-  const renderedCount = useMemo(() => countSegments(data), [data])
+  const uiCount = useMemo(() => countSegments(data), [data])
   const trackCount = useMemo(() => countTracks(data), [data])
   const rawCount = raw && typeof raw === 'object' && 'counts' in raw
     ? Number((raw as { counts?: { media_intervals?: number } }).counts?.media_intervals ?? 0)
-    : source === 'fixture'
-      ? data.counts.media_intervals
-      : 0
-  const dtoCount = data.counts.media_intervals
-  const discardedCount = Math.max(0, rawCount - renderedCount)
+    : 0
+  const dtoCount = uiCount
+  const discardedCount = Math.max(0, rawCount - dtoCount)
 
   const useFixture = () => {
     setSource('fixture')
@@ -72,16 +115,11 @@ export function TimelineDataLab() {
     }
   }
 
-  const statusState = state === 'connected' ? 'connected'
-    : state === 'loading' ? 'loading'
-      : state === 'empty' ? 'empty'
-        : 'error'
-
   return <section className="timeline-data-lab" id="timeline_data_lab">
     <header className="timeline-data-lab-header">
       <div>
         <strong>Timeline data lab</strong>
-        <small>Confirma recebimento → normalização → representação</small>
+        <small>Confirma recebimento → normalização → renderização real</small>
       </div>
       <div className="timeline-data-source-switch" role="group" aria-label="Fonte de dados">
         <button type="button" className={source === 'fixture' ? 'active' : ''} onClick={useFixture}>Fixture</button>
@@ -91,7 +129,7 @@ export function TimelineDataLab() {
     </header>
 
     <DataSourceStatus
-      state={statusState}
+      state={state}
       source={source === 'real' ? '/api/timeline' : 'DEMO_TIMELINE'}
       detail={error ?? `${trackCount} tracks · ${data.groups.length} groups`}
       updatedAt={updatedAt}
@@ -100,16 +138,18 @@ export function TimelineDataLab() {
     <DataProbe
       rawCount={rawCount}
       dtoCount={dtoCount}
-      renderedCount={renderedCount}
+      renderedCount={uiCount}
       discardedCount={discardedCount}
     />
 
     <div className="timeline-data-lab-metrics">
       <div><span>groups</span><strong>{data.groups.length}</strong></div>
       <div><span>tracks</span><strong>{trackCount}</strong></div>
-      <div><span>intervals</span><strong>{renderedCount}</strong></div>
+      <div><span>intervals</span><strong>{uiCount}</strong></div>
       <div><span>latest</span><strong>{data.latestAvailableUtc ? new Date(data.latestAvailableUtc).toLocaleTimeString('pt-BR') : '—'}</strong></div>
     </div>
+
+    <TimelineObservedPreview data={data} />
 
     <details className="timeline-data-raw">
       <summary>Payload observado</summary>

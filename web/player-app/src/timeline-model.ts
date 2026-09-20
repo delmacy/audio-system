@@ -48,7 +48,11 @@ export const TOTAL_MINUTES = 120
 export function fromApiTimeline(api: ApiTimeline): TimelineData {
   if (api.schema !== 'recorder-poc.timeline-observed.v1') throw new Error('Resposta de timeline incompatível.')
   const origin = Date.parse(api.window_start_utc)
-  if (!Number.isFinite(origin)) throw new Error('Horário da timeline inválido.')
+  const windowEnd = Date.parse(api.window_end_utc)
+  if (!Number.isFinite(origin) || !Number.isFinite(windowEnd) || windowEnd <= origin) {
+    throw new Error('Janela temporal da timeline inválida.')
+  }
+  const windowMinutes = (windowEnd - origin) / 60000
   return {
     date: api.date, startLocal: api.start_local, windowStartUtc: api.window_start_utc,
     windowEndUtc: api.window_end_utc, counts: api.counts, latestAvailableUtc: api.latest_available_utc,
@@ -56,8 +60,8 @@ export function fromApiTimeline(api: ApiTimeline): TimelineData {
       segments: track.segments.map(segment => ({
         id: segment.id, startUtc: segment.start_utc, endUtc: segment.end_utc,
         trackInstanceUUID: segment.track_instance_uuid, source: segment.source,
-        start: Math.max(0, Math.min(TOTAL_MINUTES, (Date.parse(segment.start_utc) - origin) / 60000)),
-        end: Math.max(0, Math.min(TOTAL_MINUTES, (Date.parse(segment.end_utc) - origin) / 60000)),
+        start: Math.max(0, Math.min(windowMinutes, (Date.parse(segment.start_utc) - origin) / 60000)),
+        end: Math.max(0, Math.min(windowMinutes, (Date.parse(segment.end_utc) - origin) / 60000)),
       })).filter(segment => segment.end > segment.start),
     })) })),
   }
