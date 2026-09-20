@@ -455,3 +455,87 @@ button:focus-visible,input:focus-visible,select:focus-visible,[role=slider]:focu
 }
 @media(prefers-reduced-motion:reduce){.primitive-block-motion-pulse{animation:none}}
 @media(max-width:1150px){.block-primitive-grid{grid-template-columns:repeat(2,minmax(220px,1fr))}}
+
+
+/* Simplified primitive blocks: one color, three states */
+.primitive-block{
+  --block-color:#1677ec;
+  --block-text:#fff;
+  --block-pulse-fill:color-mix(in srgb,var(--block-color) 68%,white);
+  background:var(--block-color);
+  border-color:var(--block-color);
+  color:var(--block-text);
+}
+
+.primitive-block-white{
+  --block-color:#ffffff;
+  --block-text:#314666;
+  --block-pulse-fill:#f4f7fb;
+  box-shadow:inset 0 0 0 1px #d7e2ef,0 4px 14px #102b4a0a;
+}
+.primitive-block-black{
+  --block-color:#111827;
+  --block-text:#ffffff;
+  --block-pulse-fill:#2a3442;
+}
+.primitive-block-gray{
+  --block-color:#d6dde6;
+  --block-text:#6b7787;
+  --block-pulse-fill:#e7ebf0;
+}
+.primitive-block-blue{
+  --block-color:#1677ec;
+  --block-text:#ffffff;
+  --block-pulse-fill:#5aa0f5;
+}
+.primitive-block-green{
+  --block-color:#18a35b;
+  --block-text:#ffffff;
+  --block-pulse-fill:#57bd82;
+}
+.primitive-block-yellow{
+  --block-color:#e5a318;
+  --block-text:#3f3315;
+  --block-pulse-fill:#f0c45c;
+}
+.primitive-block-red{
+  --block-color:#d94343;
+  --block-text:#ffffff;
+  --block-pulse-fill:#e77a7a;
+}
+.primitive-block-purple{
+  --block-color:#7c5ce0;
+  --block-text:#ffffff;
+  --block-pulse-fill:#a18aed;
+}
+
+.primitive-block-motion-pulse{
+  animation:primitiveBlockOutlinePulse 1.7s ease-in-out infinite;
+}
+@keyframes primitiveBlockOutlinePulse{
+  0%,100%{
+    box-shadow:0 0 0 0 color-mix(in srgb,var(--block-color) 0%,transparent),0 4px 14px color-mix(in srgb,var(--block-color) 10%,transparent);
+  }
+  50%{
+    box-shadow:0 0 0 7px color-mix(in srgb,var(--block-color) 20%,transparent),0 7px 20px color-mix(in srgb,var(--block-color) 18%,transparent);
+  }
+}
+
+.primitive-block-motion-fill-pulse{
+  animation:primitiveBlockFillPulse 1.7s ease-in-out infinite;
+}
+@keyframes primitiveBlockFillPulse{
+  0%,100%{
+    background:var(--block-color);
+    border-color:var(--block-color);
+  }
+  50%{
+    background:var(--block-pulse-fill);
+    border-color:var(--block-pulse-fill);
+  }
+}
+
+@media(prefers-reduced-motion:reduce){
+  .primitive-block-motion-pulse,
+  .primitive-block-motion-fill-pulse{animation:none}
+}
