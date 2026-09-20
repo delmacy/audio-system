@@ -116,9 +116,6 @@ def operational_intervals(day: str) -> list[dict]:
     for run in directory.iterdir():
         if not run.is_dir() or not run.name.startswith(day + "-"):
             continue
-        if run.name in RUN_INTERVAL_CACHE:
-            result.extend(RUN_INTERVAL_CACHE[run.name])
-            continue
         state_file, audit_file = run / "operational-recorder-state.json", run / "recorder-audit.jsonl"
         if not state_file.is_file() or not audit_file.is_file():
             continue
@@ -132,7 +129,6 @@ def operational_intervals(day: str) -> list[dict]:
             run_items = []
             for ordinal, track_state in enumerate(track_states):
                 run_items.extend(_operational_track_intervals(run, track_state, events, ordinal))
-            RUN_INTERVAL_CACHE[run.name] = run_items
             result.extend(run_items)
         except (OSError, ValueError, KeyError, json.JSONDecodeError):
             continue
