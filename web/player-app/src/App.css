@@ -1387,3 +1387,44 @@ button:focus-visible,input:focus-visible,select:focus-visible,[role=slider]:focu
   .timeline-observed-preview-head{align-items:flex-start;flex-direction:column}
   .timeline-observed-axis{grid-template-columns:110px minmax(0,1fr)}
 }
+
+
+/* Real recorded-track playback */
+.recorded-track-toolbar .recorded-track-play{
+  background:#eaf4ff;
+  border-color:#9fc8f4;
+  color:#0f73e6;
+}
+.recorded-track-toolbar .recorded-track-play:hover:not(:disabled){
+  background:#dceeff;
+}
+.recorded-track-playback-status{
+  --playback-state:#7d8a9a;
+  display:flex;
+  align-items:center;
+  gap:8px;
+  min-height:34px;
+  padding:7px 9px;
+  border:1px solid color-mix(in srgb,var(--playback-state) 25%,#d9e3ef);
+  border-radius:8px;
+  background:color-mix(in srgb,var(--playback-state) 5%,#fff);
+}
+.recorded-track-playback-status>span{
+  width:8px;
+  height:8px;
+  flex:none;
+  border-radius:50%;
+  background:var(--playback-state);
+}
+.recorded-track-playback-status strong{
+  min-width:0;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+  font-size:9px;
+  color:#586d84;
+}
+.recorded-track-playback-loading{--playback-state:#7c5ce0}
+.recorded-track-playback-playing{--playback-state:#18a35b}
+.recorded-track-playback-error{--playback-state:#d94343}
+.recorded-track-playback-loading>span{animation:dataSourcePulse 1.2s ease-in-out infinite}

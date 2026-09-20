@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { ThemedCheckbox } from '@/components/themed-ui'
 import { DEMO_TIMELINE } from '@/features/player/demoTimeline'
 import { fromApiTimeline, type TimelineData, type TimelineTrack } from '@/timeline-model'
@@ -80,6 +80,10 @@ export function RecordedTrackLab() {
   )
   const [error, setError] = useState<string | null>(null)
   const [updatedAt, setUpdatedAt] = useState<string | null>(null)
+  const [playbackState, setPlaybackState] = useState<'idle' | 'loading' | 'playing' | 'error'>('idle')
+  const [playbackError, setPlaybackError] = useState<string | null>(null)
+  const playbackAudios = useRef<HTMLAudioElement[]>([])
+  const playbackUrls = useRef<string[]>([])
 
   const tracks = useMemo(() => flattenRecordedTracks(data), [data])
   const selectedCount = tracks.filter(track => selectedTrackIds.includes(track.id)).length
@@ -129,6 +133,98 @@ export function RecordedTrackLab() {
   const selectAll = () => setSelectedTrackIds(tracks.map(track => track.id))
   const clearAll = () => setSelectedTrackIds([])
 
+  const stopPlayback = () => {
+    playbackAudios.current.forEach(audio => {
+      audio.pause()
+      audio.currentTime = 0
+    })
+    playbackAudios.current = []
+    playbackUrls.current.forEach(url => URL.revokeObjectURL(url))
+    playbackUrls.current = []
+    setPlaybackState('idle')
+  }
+
+  const playSelected = async () => {
+    const selected = tracks.filter(track => selectedTrackIds.includes(track.id))
+    if (source !== 'real' || selected.length === 0) return
+
+    const starts = selected.map(track => track.firstUtc).filter((value): value is string => Boolean(value))
+    const ends = selected.map(track => track.lastUtc).filter((value): value is string => Boolean(value))
+    if (starts.length === 0 || ends.length === 0) {
+      setPlaybackError('As trilhas selecionadas não possuem janela temporal reproduzível.')
+      setPlaybackState('error')
+      return
+    }
+
+    const fromUtc = new Date(Math.min(...starts.map(Date.parse))).toISOString()
+    const toUtc = new Date(Math.max(...ends.map(Date.parse))).toISOString()
+
+    stopPlayback()
+    setPlaybackState('loading')
+    setPlaybackError(null)
+
+    try {
+      const prepared = await Promise.all(selected.map(async track => {
+        const query = new URLSearchParams({
+          lt: track.logicalTrackUUID,
+          from: fromUtc,
+          to: toUtc,
+        })
+        const response = await fetch(`/api/playback/audio?${query.toString()}`)
+        if (!response.ok) {
+          const payload = await response.json().catch(() => null) as { detail?: string } | null
+          throw new Error(payload?.detail || `Falha ao preparar ${track.label}: HTTP ${response.status}`)
+        }
+        const blob = await response.blob()
+        const url = URL.createObjectURL(blob)
+        const audio = new Audio(url)
+        audio.preload = 'auto'
+        return { audio, url }
+      }))
+
+      playbackAudios.current = prepared.map(item => item.audio)
+      playbackUrls.current = prepared.map(item => item.url)
+
+      await Promise.all(playbackAudios.current.map(audio => new Promise<void>((resolve, reject) => {
+        const ready = () => {
+          cleanup()
+          resolve()
+        }
+        const failed = () => {
+          cleanup()
+          reject(new Error('O navegador não conseguiu carregar um dos WAVs de playback.'))
+        }
+        const cleanup = () => {
+          audio.removeEventListener('canplaythrough', ready)
+          audio.removeEventListener('error', failed)
+        }
+        if (audio.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA) {
+          resolve()
+          return
+        }
+        audio.addEventListener('canplaythrough', ready)
+        audio.addEventListener('error', failed)
+        audio.load()
+      })))
+
+      playbackAudios.current.forEach(audio => { audio.currentTime = 0 })
+      await Promise.all(playbackAudios.current.map(audio => audio.play()))
+      setPlaybackState('playing')
+
+      const longest = playbackAudios.current.reduce<HTMLAudioElement | null>(
+        (current, audio) => !current || audio.duration > current.duration ? audio : current,
+        null,
+      )
+      if (longest) {
+        longest.addEventListener('ended', () => stopPlayback(), { once: true })
+      }
+    } catch (cause) {
+      stopPlayback()
+      setPlaybackState('error')
+      setPlaybackError(cause instanceof Error ? cause.message : 'Falha ao reproduzir as trilhas selecionadas.')
+    }
+  }
+
   return <section className="recorded-track-lab" id="recorded_track_lab">
     <header className="recorded-track-lab-header">
       <div>
@@ -163,7 +259,29 @@ export function RecordedTrackLab() {
       <div>
         <button type="button" onClick={selectAll} disabled={tracks.length === 0}>Selecionar todas</button>
         <button type="button" onClick={clearAll} disabled={selectedCount === 0}>Limpar seleção</button>
+        <button
+          type="button"
+          className="recorded-track-play"
+          onClick={playSelected}
+          disabled={source !== 'real' || selectedCount === 0 || playbackState === 'loading'}
+        >
+          {playbackState === 'loading' ? 'Preparando...' : playbackState === 'playing' ? 'Reiniciar escuta' : 'Ouvir selecionadas'}
+        </button>
+        <button type="button" onClick={stopPlayback} disabled={playbackState !== 'playing'}>Parar</button>
       </div>
+    </div>
+
+    <div className={`recorded-track-playback-status recorded-track-playback-${playbackState}`}>
+      <span />
+      <strong>
+        {playbackState === 'playing'
+          ? `reproduzindo ${selectedCount} trilha(s) sincronizada(s)`
+          : playbackState === 'loading'
+            ? 'decodificando MXF real e montando janela sincronizada...'
+            : playbackState === 'error'
+              ? playbackError
+              : 'playback real pronto para trilhas operacionais fechadas'}
+      </strong>
     </div>
 
     <div className="recorded-track-list">
@@ -183,7 +301,7 @@ export function RecordedTrackLab() {
               color={checked ? 'blue' : 'gray'}
               checked={checked}
               onCheckedChange={value => toggleTrack(track.id, value === true)}
-              aria-label={`${checked ? 'Remover' : 'Adicionar'} ${track.label} da futura escuta`}
+              aria-label={`${checked ? 'Remover' : 'Adicionar'} ${track.label} da escuta`}
             />
             <span>ouvir</span>
           </label>
