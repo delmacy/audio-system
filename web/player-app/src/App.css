@@ -1051,3 +1051,245 @@ button:focus-visible,input:focus-visible,select:focus-visible,[role=slider]:focu
 @media(prefers-reduced-motion:reduce){
   .data-source-status-loading .data-source-status-dot{animation:none}
 }
+
+
+/* Recorded track lab */
+.recorded-track-lab{
+  display:flex;
+  flex-direction:column;
+  gap:12px;
+  border:1px solid #dce5ef;
+  border-radius:12px;
+  background:#fbfdff;
+  padding:14px;
+}
+.recorded-track-lab-header{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+}
+.recorded-track-lab-header>div:first-child{display:flex;flex-direction:column;gap:3px}
+.recorded-track-lab-header strong{font-size:13px;color:#203955}
+.recorded-track-lab-header small{font-size:10px;color:#74879e}
+
+.recorded-track-status{
+  --recorded-track-state:#7d8a9a;
+  display:flex;
+  align-items:center;
+  gap:9px;
+  min-height:44px;
+  padding:8px 10px;
+  border:1px solid color-mix(in srgb,var(--recorded-track-state) 25%,#d9e3ef);
+  border-radius:8px;
+  background:color-mix(in srgb,var(--recorded-track-state) 6%,#fff);
+}
+.recorded-track-status-connected{--recorded-track-state:#18a35b}
+.recorded-track-status-loading{--recorded-track-state:#7c5ce0}
+.recorded-track-status-empty,.recorded-track-status-idle{--recorded-track-state:#7d8a9a}
+.recorded-track-status-error{--recorded-track-state:#d94343}
+.recorded-track-status-dot{
+  width:9px;
+  height:9px;
+  border-radius:50%;
+  background:var(--recorded-track-state);
+  box-shadow:0 0 0 3px color-mix(in srgb,var(--recorded-track-state) 13%,transparent);
+  flex:none;
+}
+.recorded-track-status-loading .recorded-track-status-dot{animation:dataSourcePulse 1.2s ease-in-out infinite}
+.recorded-track-status>div{display:flex;flex-direction:column;gap:2px;min-width:0}
+.recorded-track-status strong{font-size:11px;color:#28415f}
+.recorded-track-status small{font-size:10px;color:#71849a}
+.recorded-track-status time{margin-left:auto;font-size:10px;color:#71849a;font-variant-numeric:tabular-nums}
+
+.recorded-track-toolbar{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  padding:9px 10px;
+  border:1px solid #e1e9f2;
+  border-radius:8px;
+  background:#fff;
+}
+.recorded-track-toolbar>div:first-child{display:flex;align-items:baseline;gap:5px}
+.recorded-track-toolbar>div:first-child strong{font-size:16px;color:#203955}
+.recorded-track-toolbar>div:first-child span{font-size:10px;color:#75879e}
+.recorded-track-toolbar>div:last-child{display:flex;gap:6px}
+.recorded-track-toolbar button{
+  height:29px;
+  border:1px solid #d5e0ed;
+  border-radius:7px;
+  background:#fff;
+  color:#4b607a;
+  padding:0 9px;
+  font-size:10px;
+  font-weight:700;
+}
+.recorded-track-toolbar button:hover:not(:disabled){background:#eef6ff;border-color:#a9cbee;color:#0f73e6}
+.recorded-track-toolbar button:disabled{opacity:.45;cursor:not-allowed}
+
+.recorded-track-list{
+  display:flex;
+  flex-direction:column;
+  border:1px solid #dce5ef;
+  border-radius:9px;
+  overflow:hidden;
+  background:#fff;
+}
+.recorded-track-row{
+  display:grid;
+  grid-template-columns:78px minmax(190px,1.6fr) 80px 90px 150px minmax(120px,.8fr);
+  align-items:center;
+  min-height:58px;
+  border-top:1px solid #edf2f7;
+  transition:background .15s ease,opacity .15s ease;
+}
+.recorded-track-row:first-child{border-top:0}
+.recorded-track-row.selected{background:#fff}
+.recorded-track-row.muted{background:#f6f8fa;opacity:.58}
+
+.recorded-track-listen{
+  height:100%;
+  display:flex;
+  align-items:center;
+  gap:7px;
+  padding:0 10px;
+  border-right:1px solid #edf2f7;
+  font-size:10px;
+  color:#50657e;
+  font-weight:700;
+}
+.recorded-track-identity{
+  min-width:0;
+  display:flex;
+  flex-direction:column;
+  gap:2px;
+  padding:7px 10px;
+}
+.recorded-track-identity small{
+  font-size:8px;
+  color:#8494a7;
+  text-transform:uppercase;
+  letter-spacing:.04em;
+}
+.recorded-track-identity strong{
+  font-size:11px;
+  color:#2a415e;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+.recorded-track-identity code{
+  display:block;
+  max-width:100%;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+  font-size:8px;
+  color:#7b8ea3;
+  background:transparent;
+  padding:0;
+}
+
+.recorded-track-metric{
+  display:flex;
+  flex-direction:column;
+  gap:2px;
+  padding:0 9px;
+}
+.recorded-track-metric span{
+  font-size:8px;
+  color:#8494a7;
+  text-transform:uppercase;
+}
+.recorded-track-metric strong{
+  font-size:11px;
+  color:#314964;
+  font-variant-numeric:tabular-nums;
+}
+
+.recorded-track-period{
+  display:flex;
+  align-items:center;
+  gap:5px;
+  padding:0 8px;
+  color:#60758d;
+  font-size:9px;
+  font-variant-numeric:tabular-nums;
+}
+.recorded-track-period i{font-style:normal;color:#9aadbf}
+
+.recorded-track-evidence{
+  display:flex;
+  align-items:center;
+  gap:6px;
+  padding:0 10px;
+  min-width:0;
+}
+.recorded-track-evidence>span{
+  width:8px;
+  height:8px;
+  border-radius:50%;
+  flex:none;
+}
+.recorded-track-evidence>span.indexed{background:#1677ec}
+.recorded-track-evidence>span.audit{background:#e5a318}
+.recorded-track-evidence strong{
+  min-width:0;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+  font-size:9px;
+  color:#566b83;
+}
+
+.recorded-track-selection-output{
+  display:grid;
+  grid-template-columns:auto minmax(0,1fr);
+  gap:10px;
+  align-items:center;
+  padding:8px 10px;
+  border:1px solid #e0e8f1;
+  border-radius:8px;
+  background:#f8fbff;
+}
+.recorded-track-selection-output span{
+  font-size:9px;
+  color:#778ba1;
+  text-transform:uppercase;
+  letter-spacing:.05em;
+}
+.recorded-track-selection-output code{
+  min-width:0;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+  font-size:9px;
+  color:#304964;
+}
+.recorded-track-empty{
+  padding:20px;
+  text-align:center;
+  color:#74879e;
+  font-size:11px;
+}
+
+@media(max-width:1100px){
+  .recorded-track-row{
+    grid-template-columns:72px minmax(170px,1.5fr) 70px 82px 130px;
+  }
+  .recorded-track-evidence{grid-column:2/-1;padding-bottom:7px}
+}
+@media(max-width:760px){
+  .recorded-track-lab-header,.recorded-track-toolbar{align-items:flex-start;flex-direction:column}
+  .recorded-track-row{
+    grid-template-columns:70px minmax(0,1fr);
+    row-gap:5px;
+    padding-bottom:7px;
+  }
+  .recorded-track-metric,.recorded-track-period,.recorded-track-evidence{grid-column:2}
+}
+@media(prefers-reduced-motion:reduce){
+  .recorded-track-status-loading .recorded-track-status-dot{animation:none}
+}
