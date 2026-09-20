@@ -1,0 +1,39 @@
+# Dependencies
+node_modules/
+
+# Frontend build
+web/player/
+web/player-app/dist/
+
+# Runtime / test artifacts
+runs/
+.playwright-cli/
+*.log
+
+# Native build artifacts
+**/bin/
+**/obj/
+*.exe
+*.dll
+*.obj
+*.pdb
+*.ilk
+*.lib
+*.exp
+*.tlog
+*.lastbuildstate
+*.recipe
+
+# Media / databases / generated evidence
+*.mxf
+*.wav
+*.mp3
+*.db
+*.sqlite
+*.sqlite3
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
