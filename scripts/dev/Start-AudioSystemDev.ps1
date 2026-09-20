@@ -10,6 +10,7 @@ $ErrorActionPreference = 'Stop'
 
 $ProjectRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $WebRoot = Join-Path $ProjectRoot 'web\player-app'
+$NodeModulesRoot = Join-Path $ProjectRoot 'node_modules'
 $TimelineApi = Join-Path $ProjectRoot 'scripts\player\timeline_api.py'
 $LogRoot = Join-Path $ProjectRoot 'runs\dev-supervisor'
 
@@ -77,16 +78,16 @@ function Start-Frontend {
         return
     }
 
-    $nodeModules = Join-Path $WebRoot 'node_modules'
+    $nodeModules = $NodeModulesRoot
     if (-not (Test-Path -LiteralPath $nodeModules)) {
         Write-DevLog 'node_modules missing; running npm install...' Cyan
-        & npm.cmd --prefix $WebRoot install
+        & npm.cmd --prefix $ProjectRoot install
         if ($LASTEXITCODE -ne 0) { throw 'npm install failed.' }
     }
 
     $stdout = Join-Path $LogRoot 'vite.stdout.log'
     $stderr = Join-Path $LogRoot 'vite.stderr.log'
-    $script:FrontendProcess = Start-Process -FilePath 'cmd.exe' -ArgumentList @('/d','/s','/c','npm run dev') -WorkingDirectory $WebRoot -RedirectStandardOutput $stdout -RedirectStandardError $stderr -PassThru -WindowStyle Hidden
+    $script:FrontendProcess = Start-Process -FilePath 'cmd.exe' -ArgumentList @('/d','/s','/c','npm run dev') -WorkingDirectory $ProjectRoot -RedirectStandardOutput $stdout -RedirectStandardError $stderr -PassThru -WindowStyle Hidden
     Write-DevLog "Frontend started (PID=$($script:FrontendProcess.Id), normally :5173)." Green
 }
 
@@ -183,7 +184,7 @@ function Sync-Main {
 
     Write-DevLog 'Local main updated successfully.' Green
 
-    $packageChanged = $changedFiles | Where-Object { $_ -in @('web/player-app/package.json','web/player-app/package-lock.json') }
+    $packageChanged = $changedFiles | Where-Object { $_ -in @('package.json','package-lock.json','web/player-app/package.json') }
     if ($packageChanged) {
         Write-DevLog 'Frontend dependencies changed; running npm install...' Cyan
         & npm.cmd --prefix $WebRoot install
@@ -193,7 +194,7 @@ function Sync-Main {
     $apiChanged = $changedFiles | Where-Object { $_ -like 'scripts/player/*.py' }
     if ($apiChanged) { Restart-TimelineApi }
 
-    $frontendRuntimeChanged = $changedFiles | Where-Object { $_ -in @('web/player-app/package.json','web/player-app/package-lock.json','web/player-app/vite.config.ts') }
+    $frontendRuntimeChanged = $changedFiles | Where-Object { $_ -in @('package.json','package-lock.json','web/player-app/package.json','web/player-app/vite.config.ts') }
     if ($frontendRuntimeChanged) {
         Restart-Frontend
     } else {

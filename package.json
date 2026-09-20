@@ -1,0 +1,15 @@
+{
+  "name": "audio-system",
+  "private": true,
+  "version": "0.0.0",
+  "workspaces": [
+    "web/player-app"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace=player-app",
+    "build": "npm run build --workspace=player-app",
+    "lint": "npm run lint --workspace=player-app",
+    "preview": "npm run preview --workspace=player-app",
+    "dev:supervisor": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\dev\\Start-AudioSystemDev.ps1"
+  }
+}
