@@ -7,5 +7,5 @@ import { fileURLToPath } from 'node:url'
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   resolve: { alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) } },
-  build: { outDir: '../player', emptyOutDir: true },
+  build: { outDir: 'dist', emptyOutDir: true },
 })

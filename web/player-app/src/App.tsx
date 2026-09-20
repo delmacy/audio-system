@@ -4,6 +4,7 @@ import { AppSidebar } from '@/app/AppSidebar'
 import { PlayerView } from '@/features/player/PlayerView'
 import { SimulatorView } from '@/features/simulator/SimulatorView'
 import { WorkspaceView } from '@/features/simulator/views/WorkspaceView'
+import { ComponentCatalogView } from '@/features/components/ComponentCatalogView'
 import type { MainView, SimulatorMode, SimStatus } from '@/features/simulator/model'
 import { useTimelineStore } from '@/timeline-store'
 import './App.css'
@@ -53,6 +54,8 @@ function App() {
         />
       ) : activeView === 'player' ? (
         <PlayerView />
+      ) : activeView === 'components' ? (
+        <ComponentCatalogView mode={simulatorMode} status={simulatorStatus} events={simulatorEvents} />
       ) : (
         <WorkspaceView
           view={activeView}

@@ -1,4 +1,4 @@
-export type MainView = 'simulator' | 'player' | 'services' | 'media-bank' | 'scenarios' | 'results' | 'recorder' | 'faults' | 'logs' | 'settings' | 'export'
+export type MainView = 'simulator' | 'player' | 'components' | 'services' | 'media-bank' | 'scenarios' | 'results' | 'recorder' | 'faults' | 'logs' | 'settings' | 'export'
 export type SimulatorMode = 'capture' | 'simulation'
 export type SimStatus = 'ready' | 'running' | 'paused' | 'stopped'
 
@@ -64,4 +64,3 @@ export const SIM_CWPS: CwpConfig[] = [
       { id: 'sim-b02-t1', kind: 'TEL', label: 'TEL-SIM-061', endpoint: 'sip:sim-b02-t1@10.10.0.20:5060', status: 'active' },
     ]} },
 ]
-

@@ -1,12 +1,13 @@
 import {
   Activity, AlertTriangle, CalendarDays, ChevronLeft, ChevronRight, ClipboardList,
-  Database, Download, FileText, Home, PlayCircle, Server, Settings2, SlidersHorizontal,
+  Database, Download, FileText, Home, LayoutGrid, PlayCircle, Server, Settings2, SlidersHorizontal,
 } from 'lucide-react'
 import type { MainView } from '@/features/simulator/model'
 
 const NAV = [
   { label: 'Simulador', icon: Home, view: 'simulator' as MainView },
   { label: 'Player', icon: PlayCircle, view: 'player' as MainView },
+  { label: 'Componentes', icon: LayoutGrid, view: 'components' as MainView },
   { label: 'Serviços', icon: SlidersHorizontal, view: 'services' as MainView },
   { label: 'Media Bank', icon: Database, view: 'media-bank' as MainView },
   { label: 'Cenários', icon: ClipboardList, view: 'scenarios' as MainView },
