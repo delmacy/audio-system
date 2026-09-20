@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import {
   Badge,
   CounterPill,
@@ -15,51 +16,37 @@ import {
   type PrimitiveButtonColor,
   type PrimitiveButtonVariant,
   type PrimitiveButtonSize,
+  type PrimitiveButtonIcon,
 } from '@/primitives'
 
 type PrimitiveSpec = {
   prefix: string
+  group: 'status' | 'labels' | 'metrics'
   render: (color: PrimitiveColor, motion: PrimitiveMotion, id: string) => React.ReactNode
 }
 
 const SPECS: PrimitiveSpec[] = [
-  {
-    prefix: 'status_dot',
-    render: (color, motion, id) => <StatusDot color={color} motion={motion} label={id} />,
-  },
-  {
-    prefix: 'badge',
-    render: (color, motion, id) => <Badge color={color} motion={motion}>{id}</Badge>,
-  },
-  {
-    prefix: 'info_chip',
-    render: (color, motion, id) => <InfoChip color={color} motion={motion}>{id}</InfoChip>,
-  },
-  {
-    prefix: 'counter_pill',
-    render: (color, motion) => <CounterPill color={color} motion={motion} value={12} label="items" />,
-  },
-  {
-    prefix: 'section_header',
-    render: (color, motion) => <SectionHeader color={color} motion={motion} title="Section header" detail="primitive" />,
-  },
-  {
-    prefix: 'mini_metric',
-    render: (color, motion) => <MiniMetric color={color} motion={motion} label="Metric" value="42" detail="sample" />,
-  },
-  {
-    prefix: 'tag',
-    render: (color, motion, id) => <Tag color={color} motion={motion}>{id}</Tag>,
-  },
+  { prefix: 'status_dot', group: 'status', render: (color, motion, id) => <StatusDot color={color} motion={motion} label={id} /> },
+  { prefix: 'badge', group: 'labels', render: (color, motion, id) => <Badge color={color} motion={motion}>{id}</Badge> },
+  { prefix: 'info_chip', group: 'labels', render: (color, motion, id) => <InfoChip color={color} motion={motion}>{id}</InfoChip> },
+  { prefix: 'counter_pill', group: 'labels', render: (color, motion) => <CounterPill color={color} motion={motion} value={12} label="items" /> },
+  { prefix: 'tag', group: 'labels', render: (color, motion, id) => <Tag color={color} motion={motion}>{id}</Tag> },
+  { prefix: 'section_header', group: 'metrics', render: (color, motion) => <SectionHeader color={color} motion={motion} title="Section header" detail="primitive" /> },
+  { prefix: 'mini_metric', group: 'metrics', render: (color, motion) => <MiniMetric color={color} motion={motion} label="Metric" value="42" detail="sample" /> },
 ]
 
 const BUTTON_COLORS: PrimitiveButtonColor[] = ['blue', 'gray', 'red', 'green']
 const BUTTON_VARIANTS: PrimitiveButtonVariant[] = ['solid', 'outline', 'ghost']
 const BUTTON_SIZES: PrimitiveButtonSize[] = ['sm', 'md', 'lg']
+const BUTTON_ICONS: PrimitiveButtonIcon[] = ['plus', 'x', 'play', 'pause', 'square', 'download', 'alert_triangle']
+
+type PrimitiveTab = 'buttons' | 'status' | 'labels' | 'metrics'
 
 function ButtonPrimitiveCatalog() {
   return <section className="primitive-family">
-    <header><strong>button</strong><small>blue · gray · red · green × solid · outline · ghost × sm · md · lg + disabled + icon</small></header>
+    <header><strong>button</strong><small>cor × tratamento × tamanho + pulse + disabled + ícones nomeados</small></header>
+
+    <h3 className="primitive-subtitle">Botões de texto</h3>
     <div className="primitive-button-grid">
       {BUTTON_COLORS.flatMap(color => BUTTON_VARIANTS.flatMap(variant => BUTTON_SIZES.map(size => {
         const id = `button_${color}_${variant}_${size}`
@@ -68,45 +55,81 @@ function ButtonPrimitiveCatalog() {
           <code>{id}</code>
         </article>
       })))}
-      {BUTTON_COLORS.flatMap(color => {
-        const disabledId = `button_${color}_solid_disabled`
-        const iconId = `button_${color}_ghost_icon`
-        return [
-          <article className="primitive-specimen" key={disabledId} id={disabledId}>
-            <div className="primitive-specimen-preview"><PrimitiveButton color={color} variant="solid" disabled>{disabledId}</PrimitiveButton></div>
-            <code>{disabledId}</code>
-          </article>,
-          <article className="primitive-specimen" key={iconId} id={iconId}>
-            <div className="primitive-specimen-preview"><PrimitiveButton color={color} variant="ghost" iconOnly ariaLabel={iconId} /></div>
-            <code>{iconId}</code>
-          </article>
-        ]
+    </div>
+
+    <h3 className="primitive-subtitle">Botões pulsantes</h3>
+    <div className="primitive-button-grid">
+      {BUTTON_COLORS.flatMap(color => BUTTON_VARIANTS.map(variant => {
+        const id = `button_${color}_${variant}_md_pulse`
+        return <article className="primitive-specimen" key={id} id={id}>
+          <div className="primitive-specimen-preview"><PrimitiveButton color={color} variant={variant} motion="pulse">{id}</PrimitiveButton></div>
+          <code>{id}</code>
+        </article>
+      }))}
+    </div>
+
+    <h3 className="primitive-subtitle">Estados disabled</h3>
+    <div className="primitive-button-grid">
+      {BUTTON_COLORS.map(color => {
+        const id = `button_${color}_solid_disabled`
+        return <article className="primitive-specimen" key={id} id={id}>
+          <div className="primitive-specimen-preview"><PrimitiveButton color={color} variant="solid" disabled>{id}</PrimitiveButton></div>
+          <code>{id}</code>
+        </article>
       })}
+    </div>
+
+    <h3 className="primitive-subtitle">Botões somente ícone</h3>
+    <div className="primitive-button-grid">
+      {BUTTON_COLORS.flatMap(color => BUTTON_ICONS.map(icon => {
+        const id = `button_${color}_ghost_icon_${icon}`
+        return <article className="primitive-specimen" key={id} id={id}>
+          <div className="primitive-specimen-preview"><PrimitiveButton color={color} variant="ghost" icon={icon} iconOnly ariaLabel={id} /></div>
+          <code>{id}</code>
+        </article>
+      }))}
     </div>
   </section>
 }
 
+function PrimitiveFamilies({ group }: { group: PrimitiveSpec['group'] }) {
+  return <>
+    {SPECS.filter(spec => spec.group === group).map(spec => <section className="primitive-family" key={spec.prefix}>
+      <header><strong>{spec.prefix}</strong><small>green · yellow · red · gray × static · pulse · blink · ping</small></header>
+      <div className="primitive-variant-grid">
+        {PRIMITIVE_COLORS.flatMap(color => PRIMITIVE_MOTIONS.map(motion => {
+          const id = primitiveId(spec.prefix, color, motion)
+          return <article className="primitive-specimen" key={id} id={id}>
+            <div className="primitive-specimen-preview">{spec.render(color, motion, id)}</div>
+            <code>{id}</code>
+          </article>
+        }))}
+      </div>
+    </section>)}
+  </>
+}
+
 export function PrimitiveCatalogSection({ number }: { number: string }) {
+  const [tab, setTab] = useState<PrimitiveTab>('buttons')
+
   return <section className="catalog-section">
     <div className="catalog-section-title">
       <div><span>{number}</span><h2>Primitivos visuais</h2></div>
-      <p>IDs ubíquos por cor e movimento; sem semântica de domínio.</p>
+      <p>IDs ubíquos baseados em aparência; sem semântica de domínio.</p>
     </div>
 
+    <nav className="primitive-tabs" aria-label="Tipos de primitivos visuais">
+      <button type="button" className={tab === 'buttons' ? 'active' : ''} onClick={() => setTab('buttons')}>Botões</button>
+      <button type="button" className={tab === 'status' ? 'active' : ''} onClick={() => setTab('status')}>Status</button>
+      <button type="button" className={tab === 'labels' ? 'active' : ''} onClick={() => setTab('labels')}>Badges · Tags · Chips</button>
+      <button type="button" className={tab === 'metrics' ? 'active' : ''} onClick={() => setTab('metrics')}>Métricas · Headers</button>
+    </nav>
+
     <div className="primitive-catalog-stack">
-      <ButtonPrimitiveCatalog />
-      {SPECS.map(spec => <section className="primitive-family" key={spec.prefix}>
-        <header><strong>{spec.prefix}</strong><small>green · yellow · red · gray × static · pulse · blink · ping</small></header>
-        <div className="primitive-variant-grid">
-          {PRIMITIVE_COLORS.flatMap(color => PRIMITIVE_MOTIONS.map(motion => {
-            const id = primitiveId(spec.prefix, color, motion)
-            return <article className="primitive-specimen" key={id} id={id}>
-              <div className="primitive-specimen-preview">{spec.render(color, motion, id)}</div>
-              <code>{id}</code>
-            </article>
-          }))}
-        </div>
-      </section>)}
+      {tab === 'buttons' && <ButtonPrimitiveCatalog />}
+      {tab === 'status' && <PrimitiveFamilies group="status" />}
+      {tab === 'labels' && <PrimitiveFamilies group="labels" />}
+      {tab === 'metrics' && <PrimitiveFamilies group="metrics" />}
     </div>
   </section>
 }

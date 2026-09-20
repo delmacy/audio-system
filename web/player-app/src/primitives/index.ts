@@ -13,4 +13,4 @@ export {
   type PrimitiveMotion,
 } from './types'
 
-export { PrimitiveButton, type PrimitiveButtonColor, type PrimitiveButtonVariant, type PrimitiveButtonSize } from './PrimitiveButton'
+export { PrimitiveButton, type PrimitiveButtonColor, type PrimitiveButtonVariant, type PrimitiveButtonSize, type PrimitiveButtonMotion, type PrimitiveButtonIcon } from './PrimitiveButton'
