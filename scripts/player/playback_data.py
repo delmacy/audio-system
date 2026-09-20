@@ -166,6 +166,8 @@ def build_operational_plan(logical_track_uuid: str, from_utc: str | None = None,
         "service_id": str(track.get("service_id", "")),
         "endpoint_id": str(track.get("endpoint_id", "")),
         "service_type": str(track.get("service_type", "radio")),
+        "track_index": int(track.get("track_index", 0)),
+        "mxf_path": str(resolved["mxf"]),
         "from_utc": iso(start),
         "to_utc": iso(end),
         "fabricate_recorded_silence": False,
@@ -187,10 +189,12 @@ def _ffmpeg() -> str:
     return command
 
 
-def _decode_pcm(mxf: Path) -> bytes:
+def _decode_pcm(mxf: Path, track_index: int = 0) -> bytes:
+    if track_index < 0:
+        raise ValueError("track_index must be >= 0")
     proc = subprocess.run(
         [_ffmpeg(), "-hide_banner", "-loglevel", "error", "-i", str(mxf),
-         "-map", "0:a:0", "-ac", "1", "-ar", str(SAMPLE_RATE), "-c:a", "pcm_s16le", "-f", "s16le", "-"],
+         "-map", f"0:a:{track_index}", "-ac", "1", "-ar", str(SAMPLE_RATE), "-c:a", "pcm_s16le", "-f", "s16le", "-"],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         check=False,
@@ -225,7 +229,8 @@ def render_operational_wav(logical_track_uuid: str, from_utc: str | None = None,
         total_bytes += 1
 
     cache_key = hashlib.sha256(
-        (str(resolved["mxf"]) + "|" + plan["from_utc"] + "|" + plan["to_utc"]
+        (str(resolved["mxf"]) + "|" + str(resolved["track"].get("track_index", 0))
+         + "|" + plan["from_utc"] + "|" + plan["to_utc"]
          + "|" + str(resolved["mxf"].stat().st_mtime_ns)).encode("utf-8")
     ).hexdigest()
     CACHE.mkdir(parents=True, exist_ok=True)
@@ -233,7 +238,7 @@ def render_operational_wav(logical_track_uuid: str, from_utc: str | None = None,
     if cache_path.is_file():
         return plan, cache_path.read_bytes()
 
-    decoded = _decode_pcm(resolved["mxf"])
+    decoded = _decode_pcm(resolved["mxf"], int(resolved["track"].get("track_index", 0)))
     output = bytearray(total_bytes)
     source_cursor = 0
 

@@ -491,6 +491,8 @@ typedef struct {
     gchar *display_name;
     gchar *logical_uuid;
     gchar *instance_uuid;
+    gdouble frequency_hz;
+    gint duration_ms;
 } IdentityRow;
 
 static void identity_row_free(gpointer p) {
@@ -511,15 +513,21 @@ static GPtrArray *load_identity_file(const char *path) {
         gchar *line = g_strstrip(lines[i]);
         if (i == 0 && g_str_has_prefix(line, "\xEF\xBB\xBF")) line += 3;
         if (!*line || *line == '#') continue;
-        gchar **parts = g_strsplit(line, "\t", 3);
+        gchar **parts = g_strsplit(line, "\t", 5);
         if (!parts[0] || !parts[1] || !parts[2]) {
-            g_printerr("Invalid identity row %d; expected DISPLAY<TAB>LOGICAL_UUID<TAB>INSTANCE_UUID\n", i+1);
+            g_printerr("Invalid identity row %d; expected DISPLAY<TAB>LOGICAL_UUID<TAB>INSTANCE_UUID[<TAB>FREQUENCY_HZ<TAB>DURATION_MS]\n", i+1);
             g_strfreev(parts); g_strfreev(lines); g_free(contents); g_ptr_array_unref(rows); return NULL;
         }
         IdentityRow *r = g_new0(IdentityRow,1);
         r->display_name = g_strdup(g_strstrip(parts[0]));
         r->logical_uuid = g_strdup(g_strstrip(parts[1]));
         r->instance_uuid = g_strdup(g_strstrip(parts[2]));
+        r->frequency_hz = (parts[3] && *g_strstrip(parts[3])) ? g_ascii_strtod(parts[3], NULL) : 0.0;
+        r->duration_ms = (parts[4] && *g_strstrip(parts[4])) ? atoi(parts[4]) : 0;
+        if (r->frequency_hz < 0.0 || r->duration_ms < 0) {
+            g_printerr("Invalid frequency/duration in identity row %d.\n", i+1);
+            identity_row_free(r); g_strfreev(parts); g_strfreev(lines); g_free(contents); g_ptr_array_unref(rows); return NULL;
+        }
         g_ptr_array_add(rows,r); g_strfreev(parts);
     }
     g_strfreev(lines); g_free(contents);
@@ -569,7 +577,11 @@ static int write_identity_mxf(const char *path, const char *identity_file, int s
         if (!src || !capsf || !enc || !q) { g_printerr("Could not create identity source %u.\n",i); g_ptr_array_unref(rows); return 5; }
         GstCaps *caps=gst_caps_from_string("audio/x-raw,format=S16LE,rate=8000,channels=1");
         g_object_set(capsf,"caps",caps,NULL); gst_caps_unref(caps);
-        g_object_set(src,"is-live",FALSE,"num-buffers",seconds*50,"samplesperbuffer",160,"freq",350.0+(double)(i*113),NULL);
+        gint duration_ms = r->duration_ms > 0 ? r->duration_ms : seconds * 1000;
+        gint buffers = duration_ms / 20;
+        if (buffers < 1) buffers = 1;
+        gdouble frequency_hz = r->frequency_hz > 0.0 ? r->frequency_hz : 350.0 + (double)(i*113);
+        g_object_set(src,"is-live",FALSE,"num-buffers",buffers,"samplesperbuffer",160,"freq",frequency_hz,NULL);
         gst_bin_add_many(GST_BIN(pipeline),src,capsf,enc,q,NULL);
         if (!gst_element_link_many(src,capsf,enc,q,NULL)) { g_printerr("Could not link identity chain %u.\n",i); g_ptr_array_unref(rows); return 6; }
         GstPad *qsrc=gst_element_get_static_pad(q,"src");
@@ -582,7 +594,10 @@ static int write_identity_mxf(const char *path, const char *identity_file, int s
             "logical-track-uuid", r->logical_uuid,
             "track-instance-uuid", r->instance_uuid,
             NULL);
-        g_print("IDENTITY WRITE track=%u name=%s LT=%s TI=%s\n", i+1, r->display_name, r->logical_uuid, r->instance_uuid);
+        g_print("IDENTITY WRITE track=%u name=%s LT=%s TI=%s freq=%.1fHz duration_ms=%d\n",
+            i+1, r->display_name, r->logical_uuid, r->instance_uuid,
+            r->frequency_hz > 0.0 ? r->frequency_hz : 350.0 + (double)(i*113),
+            r->duration_ms > 0 ? r->duration_ms : seconds * 1000);
         gst_object_unref(qsrc); gst_object_unref(msink);
     }
 
