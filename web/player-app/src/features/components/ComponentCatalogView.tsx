@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Activity, ClipboardList, Database, Radio } from 'lucide-react'
 import { CwpFull, CwpListItem, CwpSummary, CwpThumb, CwpThumbEdit } from '@/representations/cwp'
 import { RadioFull, RadioSummary, RadioThumb, RadioThumbEdit } from '@/representations/radio'
@@ -42,6 +42,19 @@ export function ComponentCatalogView({ mode, status, events }: {
   const [catalogTab, setCatalogTab] = useState<CatalogTab>('cwp')
 
   const sample = SIM_CWPS[0]
+  const registeredRadios = useMemo(() => {
+    const map = new Map()
+    SIM_CWPS.flatMap(item => item[previewMode].services.filter(service => service.kind === 'RADIO'))
+      .forEach(service => map.set(service.label, service))
+    return Array.from(map.values())
+  }, [previewMode])
+  const registeredTelephones = useMemo(() => {
+    const map = new Map()
+    SIM_CWPS.flatMap(item => item[previewMode].services.filter(service => service.kind === 'TEL'))
+      .forEach(service => map.set(service.label, service))
+    return Array.from(map.values())
+  }, [previewMode])
+  const [activeRadioIds, setActiveRadioIds] = useState<string[]>(sample[mode].services.filter(service => service.kind === 'RADIO' && service.status === 'active').map(service => service.id))
   const sampleRadio = sample[previewMode].services.find(service => service.kind === 'RADIO')!
   const sampleTel = sample[previewMode].services.find(service => service.kind === 'TEL')!
 
@@ -86,13 +99,16 @@ export function ComponentCatalogView({ mode, status, events }: {
         <div className="rep-showcase-stack">
           <CwpSummary cwp={cwpSummary} mode={previewMode} />
           <div className="rep-thumb-row">
-            <CwpThumb cwp={cwpThumb} mode={previewMode} />
+            <CwpThumb cwp={cwpThumb} mode={previewMode} registeredRadios={registeredRadios} registeredTelephones={registeredTelephones}
+              activeRadioIds={activeRadioIds} onActiveRadioIdsChange={setActiveRadioIds} />
             <CwpThumbEdit cwp={cwpThumbEdit} mode={previewMode} />
           </div>
           <CwpListItem cwp={cwpListItem} mode={previewMode} />
           <div className="catalog-isolated medium">
             <CwpFull cwp={cwpFull} mode={previewMode} expanded={expanded.includes(sample.id)}
-              onToggle={() => setExpanded(expanded.includes(sample.id) ? [] : [sample.id])} />
+              onToggle={() => setExpanded(expanded.includes(sample.id) ? [] : [sample.id])}
+              registeredRadios={registeredRadios} registeredTelephones={registeredTelephones}
+              activeRadioIds={activeRadioIds} onActiveRadioIdsChange={setActiveRadioIds} />
           </div>
         </div>
       </section>}
