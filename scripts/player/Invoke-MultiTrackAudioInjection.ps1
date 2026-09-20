@@ -47,7 +47,7 @@ foreach ($track in $tracks) {
         $source = Join-Path $manifestRoot $source
     }
     if (-not (Test-Path -LiteralPath $source)) {
-        throw "Source audio not found for $name: $source"
+        throw "Source audio not found for ${name}: $source"
     }
     $source = (Resolve-Path -LiteralPath $source).Path
 
