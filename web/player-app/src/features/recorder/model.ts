@@ -2,8 +2,6 @@ export type RecorderConfig = {
   name: string
   ip: string
   rtspPort: number
-  sipGatewayIp: string
-  sipPort: number
   storageUsedGb: number
   storageTotalGb: number
   splitMinutes: number
@@ -16,8 +14,6 @@ export const DEMO_RECORDER: RecorderConfig = {
   name: 'Recorder 01',
   ip: '10.10.0.10',
   rtspPort: 8554,
-  sipGatewayIp: '10.10.0.20',
-  sipPort: 5060,
   storageUsedGb: 420,
   storageTotalGb: 1000,
   splitMinutes: 60,

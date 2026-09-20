@@ -4,6 +4,7 @@ import { CwpFull, CwpListItem, CwpSummary, CwpThumb, CwpThumbEdit } from '@/repr
 import { RadioFull, RadioSummary, RadioThumb, RadioThumbEdit } from '@/representations/radio'
 import { TelephoneFull, TelephoneSummary, TelephoneThumb, TelephoneThumbEdit } from '@/representations/telephone'
 import { RecorderFull, RecorderStatus, RecorderSummary, RecorderThumb, RecorderThumbEdit } from '@/representations/recorder'
+import { SipFull, SipStatus, SipSummary, SipThumb, SipThumbEdit } from '@/representations/sip'
 import { PlayerInline, PlayerMini } from '@/representations/player'
 import { EventsBlock } from '@/features/simulator/blocks/EventsBlock'
 import { SideBlock } from '@/features/simulator/blocks/SideBlock'
@@ -95,7 +96,20 @@ export function ComponentCatalogView({ mode, status, events }: {
       </section>
 
       <section className="catalog-section">
-        <div className="catalog-section-title"><div><span>04</span><h2>Player</h2></div><p>Representações compactas para uso em listas, modais e cards.</p></div>
+        <div className="catalog-section-title"><div><span>04</span><h2>Gateway SIP</h2></div><p>Entidade própria de sinalização e tradução, separada do Recorder.</p></div>
+        <div className="rep-showcase-stack">
+          <div className="rep-thumb-row">
+            <SipThumb displayName="SIP_thumb" />
+            <SipThumbEdit displayName="SIP_thumb_edit" />
+          </div>
+          <SipStatus displayName="SIP_status" />
+          <SipSummary displayName="SIP_summary" />
+          <div className="catalog-isolated medium"><SipFull displayName="SIP_full" /></div>
+        </div>
+      </section>
+
+      <section className="catalog-section">
+        <div className="catalog-section-title"><div><span>05</span><h2>Player</h2></div><p>Representações compactas para uso em listas, modais e cards.</p></div>
         <div className="rep-showcase-stack">
           <PlayerMini label="PLAYER_mini" current="01:23" duration="04:50" />
           <PlayerInline label="PLAYER_inline" />
@@ -103,13 +117,13 @@ export function ComponentCatalogView({ mode, status, events }: {
       </section>
 
       <section className="catalog-section">
-        <div className="catalog-section-title"><div><span>05</span><h2>Blocos compostos</h2></div><p>As features montam representações conforme a necessidade.</p></div>
+        <div className="catalog-section-title"><div><span>06</span><h2>Blocos compostos</h2></div><p>As features montam representações conforme a necessidade.</p></div>
         <div className="catalog-isolated wide"><SideBlock side="A" mode={previewMode} expanded={expanded} setExpanded={setExpanded} /></div>
         <div className="catalog-isolated events-preview"><EventsBlock events={events.slice(0, 6)} /></div>
       </section>
 
       <section className="catalog-section">
-        <div className="catalog-section-title"><div><span>06</span><h2>Elementos genéricos</h2></div><p>Peças não vinculadas a uma entidade específica.</p></div>
+        <div className="catalog-section-title"><div><span>07</span><h2>Elementos genéricos</h2></div><p>Peças não vinculadas a uma entidade específica.</p></div>
         <div className="catalog-summary-grid">
           <SummaryCard icon={ClipboardList} title="CWP's" value="4" detail="ativos de 4" />
           <SummaryCard icon={Radio} title="Rádios" value="8" detail="ativos de 8" tone="green" />

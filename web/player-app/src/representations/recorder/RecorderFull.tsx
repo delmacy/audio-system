@@ -1,4 +1,4 @@
-import { Network, Server } from 'lucide-react'
+import { Server } from 'lucide-react'
 import type { SimStatus, SimulatorMode } from '@/features/simulator/model'
 
 export function RecorderFull({ mode, status, displayName = 'Gravador' }: { mode: SimulatorMode; status: SimStatus; displayName?: string }) {
@@ -6,7 +6,7 @@ export function RecorderFull({ mode, status, displayName = 'Gravador' }: { mode:
     ? 'Capturando do gravador corrente'
     : status === 'running' ? 'Gravando simulação' : 'Pronto para simulação'
 
-  return <section className="recorder-column" aria-label="Gravador e Gateway">
+  return <section className="recorder-column" aria-label="Gravador">
     <div className="recorder-card central">
       <Server size={30} /><strong>{displayName}</strong><small><i className="status-dot" />Online</small>
       <dl>
@@ -20,12 +20,6 @@ export function RecorderFull({ mode, status, displayName = 'Gravador' }: { mode:
         <span><i />Indexer OK</span>
         <span><i />File Manager OK</span>
       </div>
-    </div>
-    <div className="flow-line"><span>RTSP/RTP direto</span></div>
-    <div className="recorder-card gateway">
-      <Network size={28} /><strong>Gateway SIP</strong><small><i className="status-dot" />Online</small>
-      <dl><div><dt>IP</dt><dd>10.10.0.20</dd></div><div><dt>SIP</dt><dd>5060</dd></div></dl>
-      <p>Telefonia e rádio físico/legado passam por tradução para RTSP/RTP.</p>
     </div>
   </section>
 }
