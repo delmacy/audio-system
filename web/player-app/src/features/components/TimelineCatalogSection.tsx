@@ -7,6 +7,7 @@ import {
   TimelineTrack,
   TimelineZoomControls,
 } from '@/features/timeline/TimelinePrimitives'
+import { TimelineRulerZoom } from '@/features/timeline/TimelineRulerZoom'
 
 function Specimen({ id, children }: { id: string; children: React.ReactNode }) {
   return <article className="primitive-specimen timeline-specimen" id={id}>
@@ -27,6 +28,13 @@ export function TimelineCatalogSection({ number }: { number: string }) {
         <header><strong>ruler</strong><small>régua temporal e subdivisões</small></header>
         <div className="timeline-catalog-grid">
           <Specimen id="timeline_ruler"><TimelineRuler /></Specimen>
+        </div>
+      </section>
+
+      <section className="primitive-family">
+        <header><strong>ruler + zoom</strong><small>componente funcional com escala temporal dinâmica</small></header>
+        <div className="timeline-catalog-grid single">
+          <Specimen id="timeline_ruler_zoom"><TimelineRulerZoom durationSeconds={7200} /></Specimen>
         </div>
       </section>
 
