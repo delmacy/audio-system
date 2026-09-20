@@ -4,9 +4,17 @@ Purpose: inject different source audio files into independent Recorder logical t
 
 ## 1. Edit the manifest
 
-Copy or edit:
+Copy the tracked example to a machine-local manifest and edit the local copy:
 
-`scenarios/player/multi-track-audio-injection-01.json`
+```powershell
+Copy-Item .\scenarios\player\multi-track-audio-injection-01.json .\scenarios\player\multi-track-audio-injection.local.json
+```
+
+Edit:
+
+`scenarios/player/multi-track-audio-injection.local.json`
+
+The `.local.json` file is ignored by Git, so Windows paths and local test audio do not make the repository dirty.
 
 Each entry defines one independent RTSP/RTP recording session.
 
@@ -29,7 +37,7 @@ From repository root:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\player\Invoke-MultiTrackAudioInjection.ps1 \
-  -Manifest .\scenarios\player\multi-track-audio-injection-01.json
+  -Manifest .\scenarios\player\multi-track-audio-injection.local.json
 ```
 
 The run creates:

@@ -37,3 +37,6 @@ runs/
 Thumbs.db
 .vscode/
 .idea/
+
+# Local machine manifests
+scenarios/player/multi-track-audio-injection.local.json

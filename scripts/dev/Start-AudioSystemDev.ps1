@@ -161,7 +161,13 @@ function Sync-Main {
     if ($local -eq $remote) { return }
 
     if (-not (Test-WorkingTreeClean)) {
+        $dirty = Invoke-GitText @('status','--short')
         Write-DevLog 'Remote main changed, but local files are modified. Auto-pull skipped to protect your work.' Yellow
+        if ($dirty) {
+            foreach ($line in ($dirty -split "\r?\n")) {
+                if ($line) { Write-DevLog ("  dirty: " + $line) DarkYellow }
+            }
+        }
         return
     }
 
@@ -187,7 +193,7 @@ function Sync-Main {
     $packageChanged = $changedFiles | Where-Object { $_ -in @('package.json','package-lock.json','web/player-app/package.json') }
     if ($packageChanged) {
         Write-DevLog 'Frontend dependencies changed; running npm install...' Cyan
-        & npm.cmd --prefix $WebRoot install
+        & npm.cmd --prefix $ProjectRoot install
         if ($LASTEXITCODE -ne 0) { Write-DevLog 'npm install failed after update.' Red }
     }
 

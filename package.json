@@ -10,6 +10,7 @@
     "build": "npm run build --workspace=player-app",
     "lint": "npm run lint --workspace=player-app",
     "preview": "npm run preview --workspace=player-app",
-    "dev:supervisor": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\dev\\Start-AudioSystemDev.ps1"
+    "dev:supervisor": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\dev\\Start-AudioSystemDev.ps1",
+    "clean:legacy-node-modules": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\dev\\Clean-LegacyNodeModules.ps1"
   }
 }
