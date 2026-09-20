@@ -23,15 +23,29 @@ class Handler(BaseHTTPRequestHandler):
 
     def _json(self, status: int, payload: dict) -> None:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store")
-        self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError):
+            # Browsers/dev proxies may cancel an in-flight request during refresh,
+            # navigation or React development remounts. The request itself may
+            # already have been processed successfully; do not surface a traceback.
+            return
 
     def do_GET(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
+
+        if parsed.path == "/":
+            self._json(200, {
+                "status": "ok",
+                "service": "timeline-api",
+                "endpoints": ["/api/health", "/api/timeline"],
+            })
+            return
 
         if parsed.path == "/api/health":
             self._json(200, {"status": "ok", "service": "timeline-api"})
@@ -60,6 +74,11 @@ class Handler(BaseHTTPRequestHandler):
         print(f"[timeline-api] {self.address_string()} - {fmt % args}")
 
 
+class TimelineHttpServer(ThreadingHTTPServer):
+    daemon_threads = True
+    allow_reuse_address = True
+
+
 if __name__ == "__main__":
     print(f"Audio System timeline API listening on http://{HOST}:{PORT}")
-    ThreadingHTTPServer((HOST, PORT), Handler).serve_forever()
+    TimelineHttpServer((HOST, PORT), Handler).serve_forever()
