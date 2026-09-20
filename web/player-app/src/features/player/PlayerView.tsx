@@ -7,6 +7,7 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '
 import { Slider } from '@/components/ui/slider'
 import { TOTAL_MINUTES, clampMinute, formatClock, formatDuration, fromApiTimeline, type GroupKind, type TimelineData, type TimelineGroup, type TimelineTrack } from '@/timeline-model'
 import { useTimelineStore } from '@/timeline-store'
+import { DEMO_TIMELINE } from './demoTimeline'
 
 const LABEL_WIDTH = 220
 const AXIS_MIN_WIDTH = 900
@@ -41,6 +42,9 @@ function ActivityBars({ track }: { track: TimelineTrack }) {
   </>
 }
 
+
+const API_BASE = (import.meta.env.VITE_AUDIO_API_URL as string | undefined)?.replace(/\/$/, '') ?? ''
+const DEMO_MODE = !API_BASE
 
 export function PlayerView() {
     const groups = useTimelineStore(state => state.groups)
@@ -103,7 +107,11 @@ export function PlayerView() {
       setAudioLoading(true)
       setAudioStatus('Preparando áudio do MXF fechado…')
       try {
-        const response = await fetch('/api/preview', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        if (DEMO_MODE) {
+          setAudioStatus('Modo demo: reprodução MXF será habilitada quando o backend do notebook estiver conectado.')
+          return
+        }
+        const response = await fetch(`${API_BASE}/api/preview`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ logical_track_uuid: track.logicalTrackUUID, track_instance_uuid: segment.trackInstanceUUID }) })
         const body = await response.json()
         if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`)
@@ -131,21 +139,28 @@ export function PlayerView() {
       setLoading(true)
       setLoadError('')
       setAudioStatus('')
-      fetch('/api/timeline' + (params.size ? '?' + params.toString() : ''), { signal: controller.signal })
+      const applyTimeline = (result: TimelineData) => {
+        audioRef.current?.pause()
+        audioInstanceRef.current = ''
+        setData(result)
+        setGroups(result.groups)
+        const first = result.groups.flatMap(group => group.tracks).flatMap(track => track.segments)[0]
+        setPlayhead(first?.start ?? 0)
+        setLoading(false)
+      }
+
+      if (DEMO_MODE) {
+        applyTimeline(DEMO_TIMELINE)
+        return () => controller.abort()
+      }
+
+      fetch(`${API_BASE}/api/timeline` + (params.size ? '?' + params.toString() : ''), { signal: controller.signal })
         .then(async response => {
           const body = await response.json()
           if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`)
           return fromApiTimeline(body)
         })
-        .then(result => {
-          audioRef.current?.pause()
-          audioInstanceRef.current = ''
-          setData(result)
-          setGroups(result.groups)
-          const first = result.groups.flatMap(group => group.tracks).flatMap(track => track.segments)[0]
-          setPlayhead(first?.start ?? 0)
-          setLoading(false)
-        })
+        .then(applyTimeline)
         .catch(error => { if (error.name !== 'AbortError') { setLoadError(String(error.message || error)); setLoading(false) } })
       return () => controller.abort()
     }, [query, setGroups, setPlayhead])
@@ -245,7 +260,7 @@ export function PlayerView() {
     <header className="topbar">
       <div className="topbar-title"><strong>DATA/HORA - TIMELINE</strong><span className="topbar-divider" />
         <span>{day(0)} &nbsp; {clock(0, true)} &nbsp;–&nbsp; {day(TOTAL_MINUTES)} &nbsp; {clock(TOTAL_MINUTES, true)} &nbsp; ({formatDuration(TOTAL_MINUTES)})</span></div>
-      <div className="topbar-actions"><span className="demo-badge">MXF FECHADO · {data?.counts.indexed_intervals ?? 0} INDEXADOS / {data?.counts.unindexed_intervals ?? 0} SEM ÍNDICE</span>
+      <div className="topbar-actions"><span className="demo-badge">{DEMO_MODE ? 'DEMO FRONTEND' : 'BACKEND CONECTADO'} · {data?.counts.indexed_intervals ?? 0} INDEXADOS / {data?.counts.unindexed_intervals ?? 0} SEM ÍNDICE</span>
         <button className="timezone-button" type="button" onClick={() => setPanel('settings')}>UTC −03:00 (Brasília) <ChevronDown size={16} /></button>
         <label className="date-button" title="Escolher data"><CalendarDays size={20} /><input type="date" value={data?.date ?? ''} onChange={event => setQuery({ date: event.target.value })} aria-label="Escolher data" /></label>
       </div>
