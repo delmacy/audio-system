@@ -106,7 +106,7 @@ export function RecordedTrackLab() {
     setError(null)
 
     try {
-      const response = await fetch('/api/timeline', { headers: { Accept: 'application/json' } })
+      const response = await fetch('/api/timeline?run=latest', { headers: { Accept: 'application/json' } })
       const payload: unknown = await response.json()
 
       if (!response.ok) {

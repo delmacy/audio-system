@@ -7,6 +7,9 @@ export type ActivitySegment = {
   startUtc: string
   endUtc: string
   trackInstanceUUID: string
+  runId?: string | null
+  mxfName?: string | null
+  trackIndex?: number | null
   source: 'sqlite_closed_mxf' | 'closed_mxf_recorder_audit_unindexed'
 }
 
@@ -35,7 +38,7 @@ export type TimelineData = {
   latestAvailableUtc: string | null
 }
 
-type ApiSegment = { id: string; start_utc: string; end_utc: string; track_instance_uuid: string; source: ActivitySegment['source'] }
+type ApiSegment = { id: string; start_utc: string; end_utc: string; track_instance_uuid: string; run_id?: string | null; mxf_name?: string | null; track_index?: number | null; source: ActivitySegment['source'] }
 type ApiTrack = { id: string; label: string; logicalTrackUUID: string; segments: ApiSegment[]; sources: string[] }
 type ApiGroup = { id: string; kind: GroupKind; label: string; tracks: ApiTrack[] }
 type ApiTimeline = {
@@ -59,7 +62,11 @@ export function fromApiTimeline(api: ApiTimeline): TimelineData {
     groups: api.groups.map(group => ({ ...group, tracks: group.tracks.map(track => ({ ...track,
       segments: track.segments.map(segment => ({
         id: segment.id, startUtc: segment.start_utc, endUtc: segment.end_utc,
-        trackInstanceUUID: segment.track_instance_uuid, source: segment.source,
+        trackInstanceUUID: segment.track_instance_uuid,
+        runId: segment.run_id ?? null,
+        mxfName: segment.mxf_name ?? null,
+        trackIndex: segment.track_index ?? null,
+        source: segment.source,
         start: Math.max(0, Math.min(windowMinutes, (Date.parse(segment.start_utc) - origin) / 60000)),
         end: Math.max(0, Math.min(windowMinutes, (Date.parse(segment.end_utc) - origin) / 60000)),
       })).filter(segment => segment.end > segment.start),

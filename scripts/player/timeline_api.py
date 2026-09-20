@@ -61,8 +61,9 @@ class Handler(BaseHTTPRequestHandler):
             query = parse_qs(parsed.query)
             date = query.get("date", [None])[0]
             start = query.get("start", [None])[0]
+            run = query.get("run", [None])[0]
             try:
-                self._json(200, build_timeline(date=date, start=start))
+                self._json(200, build_timeline(date=date, start=start, run=run))
             except ValueError as exc:
                 self._json(400, {"error": "invalid_request", "detail": str(exc)})
             except Exception as exc:

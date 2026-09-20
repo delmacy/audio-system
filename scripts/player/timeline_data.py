@@ -102,20 +102,29 @@ def _operational_track_intervals(run: Path, track_state: dict, events: list[dict
                     "service_type": track_state.get("service_type", "radio"),
                     "service_id": track_state["service_id"],
                     "endpoint_id": track_state["endpoint_id"],
+                    "run_id": run.name,
+                    "mxf_name": mxf.name,
+                    "track_index": int(track_state.get("track_index", ordinal)),
                     "source": "closed_mxf_recorder_audit_unindexed",
                 })
             opened = None
     return items
 
 
-def operational_intervals(day: str) -> list[dict]:
+def operational_intervals(day: str, run_selector: str | None = None) -> list[dict]:
     directory = ROOT / "runs" / "operational-recorder"
     if not directory.is_dir():
         return []
+    runs = sorted(
+        (run for run in directory.iterdir() if run.is_dir() and run.name.startswith(day + "-")),
+        key=lambda run: run.name,
+    )
+    if run_selector == "latest":
+        runs = runs[-1:] if runs else []
+    elif run_selector:
+        runs = [run for run in runs if run.name == run_selector]
     result = []
-    for run in directory.iterdir():
-        if not run.is_dir() or not run.name.startswith(day + "-"):
-            continue
+    for run in runs:
         state_file, audit_file = run / "operational-recorder-state.json", run / "recorder-audit.jsonl"
         if not state_file.is_file() or not audit_file.is_file():
             continue
@@ -134,7 +143,7 @@ def operational_intervals(day: str) -> list[dict]:
             continue
     return result
 
-def build_timeline(date: str | None = None, start: str | None = None) -> dict:
+def build_timeline(date: str | None = None, start: str | None = None, run: str | None = None) -> dict:
     if date is None:
         date = latest_local_date()
         date = f"{date[:4]}-{date[4:6]}-{date[6:]}"
@@ -144,7 +153,10 @@ def build_timeline(date: str | None = None, start: str | None = None) -> dict:
     if start is not None and not START_RE.fullmatch(start):
         raise ValueError("Início deve usar HH:MM.")
     day = date.replace("-", "")
-    intervals = index_intervals(day) + operational_intervals(day)
+    if run:
+        intervals = operational_intervals(day, run_selector=run)
+    else:
+        intervals = index_intervals(day) + operational_intervals(day)
     if start is None:
         latest = max((parse_utc(s["end_utc"]).astimezone(LOCAL_TZ) for s in intervals), default=None)
         start_hour = max(0, min(22, latest.hour - 1)) if latest else 8
@@ -166,6 +178,9 @@ def build_timeline(date: str | None = None, start: str | None = None) -> dict:
         track["sources"].add(item["source"])
         track["segments"].append({"id": item["id"], "start_utc": item["start_utc"],
                                    "end_utc": item["end_utc"], "track_instance_uuid": item["track_instance_uuid"],
+                                   "run_id": item.get("run_id"),
+                                   "mxf_name": item.get("mxf_name"),
+                                   "track_index": item.get("track_index"),
                                    "source": item["source"]})
     ordered = []
     for group in sorted(groups.values(), key=lambda x: (x["kind"], x["label"])):
@@ -177,7 +192,7 @@ def build_timeline(date: str | None = None, start: str | None = None) -> dict:
         group["tracks"] = tracks
         ordered.append(group)
     return {"schema": "recorder-poc.timeline-observed.v1", "scope": "observed_closed_mxf_intervals",
-            "date": date, "start_local": start, "timezone": "UTC-03:00",
+            "date": date, "start_local": start, "timezone": "UTC-03:00", "run": run,
             "window_start_utc": iso(window_start), "window_end_utc": iso(window_end),
             "groups": ordered, "counts": {"groups": len(ordered),
                                        "logical_tracks": sum(len(g["tracks"]) for g in ordered),

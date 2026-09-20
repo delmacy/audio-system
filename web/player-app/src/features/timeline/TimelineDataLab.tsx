@@ -151,7 +151,7 @@ export function TimelineDataLab() {
     setError(null)
 
     try {
-      const response = await fetch('/api/timeline', { headers: { Accept: 'application/json' } })
+      const response = await fetch('/api/timeline?run=latest', { headers: { Accept: 'application/json' } })
       const payload: unknown = await response.json()
       setRaw(payload)
 
@@ -188,7 +188,7 @@ export function TimelineDataLab() {
 
     <DataSourceStatus
       state={state}
-      source={source === 'real' ? '/api/timeline' : 'DEMO_TIMELINE'}
+      source={source === 'real' ? '/api/timeline?run=latest' : 'DEMO_TIMELINE'}
       detail={error ?? `${trackCount} tracks · ${data.groups.length} groups`}
       updatedAt={updatedAt}
     />
