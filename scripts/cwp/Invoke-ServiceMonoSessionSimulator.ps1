@@ -14,6 +14,7 @@ param(
     [int]$SilenceMs = 300,
     [int]$KeepaliveIntervalMs = 150,
     [int]$PausedProbePackets = 1,
+    [int]$StartDelayMs = 0,
     [string]$PcmaFile = ''
 )
 Set-StrictMode -Version Latest
@@ -46,6 +47,8 @@ function New-RtpPacket { param([int]$Seq,[uint32]$Timestamp,[byte[]]$Payload)
     [Array]::Copy($Payload,0,$packet,12,$Payload.Length)
     return $packet
 }
+
+if ($StartDelayMs -gt 0) { Start-Sleep -Milliseconds $StartDelayMs }
 
 $client = New-Object Net.Sockets.TcpClient
 $client.Connect($RecorderIp,$RtspPort)
