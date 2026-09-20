@@ -4,7 +4,7 @@ import { ModeSwitch } from '../components/ModeSwitch'
 import { ServicePill } from '../components/ServicePill'
 import { SIM_CWPS, type CwpConfig, type MainView, type SimulatorMode, type SimStatus } from '../model'
 export type WorkspaceViewProps = {
-  view: Exclude<MainView, 'simulator' | 'player'>
+  view: Exclude<MainView, 'simulator' | 'player' | 'components'>
   mode: SimulatorMode
   setMode: (mode: SimulatorMode) => void
   status: SimStatus
