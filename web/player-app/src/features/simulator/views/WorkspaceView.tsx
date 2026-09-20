@@ -1,7 +1,8 @@
 import { Activity, AlertTriangle, CheckCircle2, Database, FileText, Monitor, Phone, Radio, Server, Wrench } from 'lucide-react'
 import { Checkbox } from '@/components/ui/checkbox'
-import { ModeSwitch } from '../components/ModeSwitch'
-import { ServicePill } from '../components/ServicePill'
+import { ModeSwitch } from '../elements/ModeSwitch'
+import { RadioPill } from '@/representations/radio'
+import { TelephonePill } from '@/representations/telephone'
 import { SIM_CWPS, type CwpConfig, type MainView, type SimulatorMode, type SimStatus } from '../model'
 export type WorkspaceViewProps = {
   view: Exclude<MainView, 'simulator' | 'player' | 'components'>
@@ -49,7 +50,7 @@ function ServicesConfigView({ mode }: { mode: SimulatorMode }) {
             return <div className="config-item" key={cwp.id}>
               <div className="item-title"><Monitor size={22} /><strong>{cwp.label}</strong><small><i className="status-dot" />Online</small></div>
               <div className="item-fields"><span>Console IP <b>{cfg.consoleIp}</b></span><span>Rádios <b>{cfg.radios}</b></span><span>Telefones <b>{cfg.telephones}</b></span><span>Serviços <b>{cfg.services.length}</b></span></div>
-              <div className="item-services">{cfg.services.map(service => <ServicePill key={service.id} service={service} />)}</div>
+              <div className="item-services">{cfg.services.map(service => service.kind === 'RADIO' ? <RadioPill key={service.id} radio={service} /> : <TelephonePill key={service.id} telephone={service} />)}</div>
               <div className="item-actions"><button type="button"><Wrench size={15} />Editar CWP</button><button type="button"><FileText size={15} />Detalhes</button></div>
             </div>
           })}
