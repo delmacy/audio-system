@@ -21,6 +21,12 @@ export function ComponentCatalogView({ mode, status, events }: {
   const sample = SIM_CWPS[0]
   const sampleRadio = sample[previewMode].services.find(service => service.kind === 'RADIO')!
   const sampleTel = sample[previewMode].services.find(service => service.kind === 'TEL')!
+  const cwpFull = { ...sample, label: 'CWP_full' }
+  const cwpSummary = { ...sample, label: 'CWP_summary' }
+  const cwpThumb = { ...sample, label: 'CWP_thumb' }
+  const cwpListItem = { ...sample, label: 'CWP_list_item' }
+  const radioSummary = { ...sampleRadio, label: 'RADIO_summary' }
+  const telephoneSummary = { ...sampleTel, label: 'TELEPHONE_summary' }
 
   return <main className="component-catalog-main">
     <header className="component-catalog-header">
@@ -36,11 +42,11 @@ export function ComponentCatalogView({ mode, status, events }: {
       <section className="catalog-section">
         <div className="catalog-section-title"><div><span>01</span><h2>CWP · múltiplas representações</h2></div><p>Uma entidade, várias densidades visuais.</p></div>
         <div className="rep-showcase-stack">
-          <CwpSummary cwp={sample} mode={previewMode} />
-          <div className="rep-thumb-row"><CwpThumb cwp={sample} mode={previewMode} /><CwpThumb cwp={SIM_CWPS[1]} mode={previewMode} /></div>
-          <CwpListItem cwp={sample} mode={previewMode} />
+          <CwpSummary cwp={cwpSummary} mode={previewMode} />
+          <div className="rep-thumb-row"><CwpThumb cwp={cwpThumb} mode={previewMode} /></div>
+          <CwpListItem cwp={cwpListItem} mode={previewMode} />
           <div className="catalog-isolated medium">
-            <CwpFull cwp={sample} mode={previewMode} expanded={expanded.includes(sample.id)}
+            <CwpFull cwp={cwpFull} mode={previewMode} expanded={expanded.includes(sample.id)}
               onToggle={() => setExpanded(expanded.includes(sample.id) ? [] : [sample.id])} />
           </div>
         </div>
@@ -49,25 +55,25 @@ export function ComponentCatalogView({ mode, status, events }: {
       <section className="catalog-section">
         <div className="catalog-section-title"><div><span>02</span><h2>Rádio e telefone</h2></div><p>Representações reutilizáveis fora do Simulator.</p></div>
         <div className="rep-showcase-stack">
-          <RadioSummary radio={sampleRadio} />
-          <TelephoneSummary telephone={sampleTel} />
+          <RadioSummary radio={radioSummary} />
+          <TelephoneSummary telephone={telephoneSummary} />
         </div>
       </section>
 
       <section className="catalog-section">
         <div className="catalog-section-title"><div><span>03</span><h2>Recorder</h2></div><p>Status compacto, summary e visual completo.</p></div>
         <div className="rep-showcase-stack">
-          <RecorderStatus />
-          <RecorderSummary status={status} />
-          <div className="catalog-isolated recorder-preview"><RecorderFull mode={previewMode} status={status} /></div>
+          <RecorderStatus displayName="RECORDER_status" />
+          <RecorderSummary status={status} displayName="RECORDER_summary" />
+          <div className="catalog-isolated recorder-preview"><RecorderFull mode={previewMode} status={status} displayName="RECORDER_full" /></div>
         </div>
       </section>
 
       <section className="catalog-section">
         <div className="catalog-section-title"><div><span>04</span><h2>Player</h2></div><p>Representações compactas para uso em listas, modais e cards.</p></div>
         <div className="rep-showcase-stack">
-          <PlayerMini current="01:23" duration="04:50" />
-          <PlayerInline label="TWR 121.500 · gravação selecionada" />
+          <PlayerMini label="PLAYER_mini" current="01:23" duration="04:50" />
+          <PlayerInline label="PLAYER_inline" />
         </div>
       </section>
 
