@@ -1,8 +1,8 @@
 import { useState } from 'react'
 import { Activity, ClipboardList, Database, Radio } from 'lucide-react'
 import { CwpFull, CwpListItem, CwpSummary, CwpThumb, CwpThumbEdit } from '@/representations/cwp'
-import { RadioSummary } from '@/representations/radio'
-import { TelephoneSummary } from '@/representations/telephone'
+import { RadioFull, RadioSummary, RadioThumb, RadioThumbEdit } from '@/representations/radio'
+import { TelephoneFull, TelephoneSummary, TelephoneThumb, TelephoneThumbEdit } from '@/representations/telephone'
 import { RecorderFull, RecorderStatus, RecorderSummary } from '@/representations/recorder'
 import { PlayerInline, PlayerMini } from '@/representations/player'
 import { EventsBlock } from '@/features/simulator/blocks/EventsBlock'
@@ -26,8 +26,14 @@ export function ComponentCatalogView({ mode, status, events }: {
   const cwpThumb = { ...sample, label: 'CWP_thumb' }
   const cwpThumbEdit = { ...sample, label: 'CWP_thumb_edit' }
   const cwpListItem = { ...sample, label: 'CWP_list_item' }
+  const radioFull = { ...sampleRadio, label: 'RADIO_full' }
   const radioSummary = { ...sampleRadio, label: 'RADIO_summary' }
+  const radioThumb = { ...sampleRadio, label: 'RADIO_thumb' }
+  const radioThumbEdit = { ...sampleRadio, label: 'RADIO_thumb_edit' }
+  const telephoneFull = { ...sampleTel, label: 'TELEPHONE_full' }
   const telephoneSummary = { ...sampleTel, label: 'TELEPHONE_summary' }
+  const telephoneThumb = { ...sampleTel, label: 'TELEPHONE_thumb' }
+  const telephoneThumbEdit = { ...sampleTel, label: 'TELEPHONE_thumb_edit' }
 
   return <main className="component-catalog-main">
     <header className="component-catalog-header">
@@ -59,8 +65,19 @@ export function ComponentCatalogView({ mode, status, events }: {
       <section className="catalog-section">
         <div className="catalog-section-title"><div><span>02</span><h2>Rádio e telefone</h2></div><p>Representações reutilizáveis fora do Simulator.</p></div>
         <div className="rep-showcase-stack">
+          <div className="rep-thumb-row">
+            <RadioThumb radio={radioThumb} />
+            <RadioThumbEdit radio={radioThumbEdit} />
+          </div>
           <RadioSummary radio={radioSummary} />
+          <div className="catalog-isolated medium"><RadioFull radio={radioFull} /></div>
+
+          <div className="rep-thumb-row">
+            <TelephoneThumb telephone={telephoneThumb} />
+            <TelephoneThumbEdit telephone={telephoneThumbEdit} />
+          </div>
           <TelephoneSummary telephone={telephoneSummary} />
+          <div className="catalog-isolated medium"><TelephoneFull telephone={telephoneFull} /></div>
         </div>
       </section>
 
