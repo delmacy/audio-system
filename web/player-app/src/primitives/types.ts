@@ -1,7 +1,7 @@
-export type PrimitiveColor = 'green' | 'yellow' | 'red' | 'gray'
+export type PrimitiveColor = 'green' | 'yellow' | 'red' | 'gray' | 'purple'
 export type PrimitiveMotion = 'static' | 'pulse' | 'blink' | 'ping'
 
-export const PRIMITIVE_COLORS: PrimitiveColor[] = ['green', 'yellow', 'red', 'gray']
+export const PRIMITIVE_COLORS: PrimitiveColor[] = ['green', 'yellow', 'red', 'gray', 'purple']
 export const PRIMITIVE_MOTIONS: PrimitiveMotion[] = ['static', 'pulse', 'blink', 'ping']
 
 export function primitiveClass(base: string, color: PrimitiveColor, motion: PrimitiveMotion) {

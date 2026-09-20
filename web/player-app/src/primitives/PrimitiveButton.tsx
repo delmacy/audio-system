@@ -1,6 +1,6 @@
 import { AlertTriangle, Download, Pause, Play, Plus, Square, X } from 'lucide-react'
 
-export type PrimitiveButtonColor = 'blue' | 'gray' | 'red' | 'green'
+export type PrimitiveButtonColor = 'blue' | 'gray' | 'red' | 'green' | 'purple'
 export type PrimitiveButtonVariant = 'solid' | 'outline' | 'ghost'
 export type PrimitiveButtonSize = 'sm' | 'md' | 'lg'
 export type PrimitiveButtonMotion = 'static' | 'pulse'

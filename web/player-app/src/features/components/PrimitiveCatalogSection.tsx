@@ -35,7 +35,7 @@ const SPECS: PrimitiveSpec[] = [
   { prefix: 'mini_metric', group: 'metrics', render: (color, motion) => <MiniMetric color={color} motion={motion} label="Metric" value="42" detail="sample" /> },
 ]
 
-const BUTTON_COLORS: PrimitiveButtonColor[] = ['blue', 'gray', 'red', 'green']
+const BUTTON_COLORS: PrimitiveButtonColor[] = ['blue', 'gray', 'red', 'green', 'purple']
 const BUTTON_VARIANTS: PrimitiveButtonVariant[] = ['solid', 'outline', 'ghost']
 const BUTTON_SIZES: PrimitiveButtonSize[] = ['sm', 'md', 'lg']
 const BUTTON_ICONS: PrimitiveButtonIcon[] = ['plus', 'x', 'play', 'pause', 'square', 'download', 'alert_triangle']
@@ -95,7 +95,7 @@ function ButtonPrimitiveCatalog() {
 function PrimitiveFamilies({ group }: { group: PrimitiveSpec['group'] }) {
   return <>
     {SPECS.filter(spec => spec.group === group).map(spec => <section className="primitive-family" key={spec.prefix}>
-      <header><strong>{spec.prefix}</strong><small>green · yellow · red · gray × static · pulse · blink · ping</small></header>
+      <header><strong>{spec.prefix}</strong><small>green · yellow · red · gray · purple × static · pulse · blink · ping</small></header>
       <div className="primitive-variant-grid">
         {PRIMITIVE_COLORS.flatMap(color => PRIMITIVE_MOTIONS.map(motion => {
           const id = primitiveId(spec.prefix, color, motion)

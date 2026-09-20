@@ -12,9 +12,10 @@ import { SideBlock } from '@/features/simulator/blocks/SideBlock'
 import { ModeSwitch } from '@/features/simulator/elements/ModeSwitch'
 import { SummaryCard } from '@/features/simulator/elements/SummaryCard'
 import { PrimitiveCatalogSection } from '@/features/components/PrimitiveCatalogSection'
+import { ShadcnCatalogSection } from '@/features/components/ShadcnCatalogSection'
 import { SIM_CWPS, type SimStatus, type SimulatorMode } from '@/features/simulator/model'
 
-type CatalogTab = 'cwp' | 'radios' | 'telephones' | 'recorder' | 'sip' | 'player' | 'primitives' | 'blocks' | 'elements'
+type CatalogTab = 'cwp' | 'radios' | 'telephones' | 'recorder' | 'sip' | 'player' | 'primitives' | 'shadcn' | 'blocks' | 'elements'
 
 const CATALOG_TABS: { id: CatalogTab; label: string }[] = [
   { id: 'cwp', label: 'CWP' },
@@ -24,6 +25,7 @@ const CATALOG_TABS: { id: CatalogTab; label: string }[] = [
   { id: 'sip', label: 'SIP' },
   { id: 'player', label: 'Player' },
   { id: 'primitives', label: 'Primitivos' },
+  { id: 'shadcn', label: 'shadcn/UI' },
   { id: 'blocks', label: 'Blocos' },
   { id: 'elements', label: 'Elementos' },
 ]
@@ -154,9 +156,11 @@ export function ComponentCatalogView({ mode, status, events }: {
 
       {catalogTab === 'primitives' && <PrimitiveCatalogSection number="07" />}
 
+      {catalogTab === 'shadcn' && <ShadcnCatalogSection number="08" />}
+
       {catalogTab === 'blocks' && <>
         <section className="catalog-section">
-          <div className="catalog-section-title"><div><span>08</span><h2>Barra de Simulação</h2></div><p>Bloco operacional isolado e interativo.</p></div>
+          <div className="catalog-section-title"><div><span>09</span><h2>Barra de Simulação</h2></div><p>Bloco operacional isolado e interativo.</p></div>
           <div className="catalog-action-bar-preview">
             <SimulatorActionBarBlock
               mode={previewMode}
@@ -171,14 +175,14 @@ export function ComponentCatalogView({ mode, status, events }: {
         </section>
 
         <section className="catalog-section">
-          <div className="catalog-section-title"><div><span>09</span><h2>Blocos compostos</h2></div><p>Composições maiores usadas pelas views.</p></div>
+          <div className="catalog-section-title"><div><span>10</span><h2>Blocos compostos</h2></div><p>Composições maiores usadas pelas views.</p></div>
           <div className="catalog-isolated wide"><SideBlock side="A" mode={previewMode} expanded={expanded} setExpanded={setExpanded} /></div>
           <div className="catalog-isolated events-preview"><EventsBlock events={events.slice(0, 6)} /></div>
         </section>
       </>}
 
       {catalogTab === 'elements' && <section className="catalog-section">
-        <div className="catalog-section-title"><div><span>10</span><h2>Elementos genéricos</h2></div><p>Peças não vinculadas a uma entidade específica.</p></div>
+        <div className="catalog-section-title"><div><span>11</span><h2>Elementos genéricos</h2></div><p>Peças não vinculadas a uma entidade específica.</p></div>
         <div className="catalog-summary-grid">
           <SummaryCard icon={ClipboardList} title="CWP's" value="4" detail="ativos de 4" />
           <SummaryCard icon={Radio} title="Rádios" value="8" detail="ativos de 8" tone="green" />
