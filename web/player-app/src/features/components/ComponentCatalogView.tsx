@@ -3,7 +3,7 @@ import { Activity, ClipboardList, Database, Radio } from 'lucide-react'
 import { CwpFull, CwpListItem, CwpSummary, CwpThumb, CwpThumbEdit } from '@/representations/cwp'
 import { RadioFull, RadioSummary, RadioThumb, RadioThumbEdit } from '@/representations/radio'
 import { TelephoneFull, TelephoneSummary, TelephoneThumb, TelephoneThumbEdit } from '@/representations/telephone'
-import { RecorderFull, RecorderStatus, RecorderSummary } from '@/representations/recorder'
+import { RecorderFull, RecorderStatus, RecorderSummary, RecorderThumb, RecorderThumbEdit } from '@/representations/recorder'
 import { PlayerInline, PlayerMini } from '@/representations/player'
 import { EventsBlock } from '@/features/simulator/blocks/EventsBlock'
 import { SideBlock } from '@/features/simulator/blocks/SideBlock'
@@ -84,6 +84,10 @@ export function ComponentCatalogView({ mode, status, events }: {
       <section className="catalog-section">
         <div className="catalog-section-title"><div><span>03</span><h2>Recorder</h2></div><p>Status compacto, summary e visual completo.</p></div>
         <div className="rep-showcase-stack">
+          <div className="rep-thumb-row">
+            <RecorderThumb status={status} displayName="RECORDER_thumb" />
+            <RecorderThumbEdit displayName="RECORDER_thumb_edit" />
+          </div>
           <RecorderStatus displayName="RECORDER_status" />
           <RecorderSummary status={status} displayName="RECORDER_summary" />
           <div className="catalog-isolated recorder-preview"><RecorderFull mode={previewMode} status={status} displayName="RECORDER_full" /></div>

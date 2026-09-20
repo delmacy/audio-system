@@ -5,7 +5,7 @@ import { RadioPill } from '@/representations/radio'
 import { TelephonePill } from '@/representations/telephone'
 import { SIM_CWPS, type CwpConfig, type MainView, type SimulatorMode, type SimStatus } from '../model'
 export type WorkspaceViewProps = {
-  view: Exclude<MainView, 'simulator' | 'player' | 'components'>
+  view: Exclude<MainView, 'simulator' | 'player' | 'components' | 'recorder'>
   mode: SimulatorMode
   setMode: (mode: SimulatorMode) => void
   status: SimStatus
@@ -110,15 +110,6 @@ function ResultsView({ openPlayer }: { openPlayer: () => void }) {
   </section></div>
 }
 
-function RecorderOpsView({ mode }: { mode: SimulatorMode }) {
-  return <div className="workspace-body"><section className="view-grid two">
-    <article className="view-card recorder-ops-card"><header className="view-card-header"><div><h2>Gravador Corrente</h2><p>{mode === 'capture' ? 'Fonte da captura real.' : 'Alvo da simulação de teste.'}</p></div><span className="ok-pill">Online</span></header>
-      <div className="recorder-detail-grid"><span>IP <b>10.10.0.10</b></span><span>RTSP <b>8554</b></span><span>Storage <b>420 GB / 1 TB</b></span><span>Split <b>60 min</b></span><span>Writer <b>MXF</b></span><span>Codec <b>G.711 A-law</b></span></div></article>
-    <article className="view-card recorder-ops-card"><header className="view-card-header"><div><h2>Pipeline</h2><p>Estado dos componentes de captura, escrita e indexação.</p></div></header>
-      <div className="health-list big"><span><i />RTSP Ingest OK</span><span><i />RTP Media Engine OK</span><span><i />MXF Writer OK</span><span><i />File Manager OK</span><span><i />SQLite Indexer OK</span><span><i />Event Bus OK</span></div></article>
-  </section></div>
-}
-
 function FaultInjectionView({ mode, setMode, setStatus, setEvents, events }: WorkspaceViewProps) {
   const faults = ['RTP packet loss', 'RTP duplicate/out-of-order', 'RTSP disconnect', 'SIP abrupt BYE', 'Indexer restart', 'Writer delay']
   return <div className="workspace-body">
@@ -153,7 +144,6 @@ export function WorkspaceView(props: WorkspaceViewProps) {
     'media-bank': ['Media Bank', 'Organize áudios, tons e conversas usados para gerar tráfego de teste.'],
     scenarios: ['Cenários', 'Monte, selecione e prepare execuções de simulação.'],
     results: ['Runs e Resultados', 'Acompanhe execuções, relatórios e atalhos para revisão no Player.'],
-    recorder: ['Gravador', 'Monitore o gravador corrente, pipeline e armazenamento.'],
     faults: ['Fault Injection', 'Programe falhas controladas e resultados esperados.'],
     logs: ['Logs e Eventos', 'Consulte eventos operacionais e auditoria do simulador/gravador.'],
     settings: ['Configurações', 'Ajuste modo operacional e regras globais da aplicação.'],
@@ -167,7 +157,6 @@ export function WorkspaceView(props: WorkspaceViewProps) {
     {props.view === 'media-bank' && <MediaBankView mode={props.mode} />}
     {props.view === 'scenarios' && <ScenariosView {...props} />}
     {props.view === 'results' && <ResultsView openPlayer={props.openPlayer} />}
-    {props.view === 'recorder' && <RecorderOpsView mode={props.mode} />}
     {props.view === 'faults' && <FaultInjectionView {...props} />}
     {props.view === 'logs' && <LogsEventsView events={props.events} />}
     {props.view === 'settings' && <SettingsWorkspaceView mode={props.mode} setMode={props.setMode} />}
