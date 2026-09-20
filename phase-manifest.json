@@ -1,0 +1,416 @@
+{
+  "project": "recorder-poc",
+  "phase": 14,
+  "name": "Playback Decode / Segment Export",
+  "status": "materialized-awaiting-integrated-target-test",
+  "prerequisites": [
+    "phase0-pass",
+    "phase1-pass",
+    "phase2-foundation-complete"
+  ],
+  "codec": "G.711 A-law / PCMA",
+  "sample_rate_hz": 8000,
+  "channel_count_per_track": 1,
+  "scale_gst_launch": [
+    2,
+    10,
+    50,
+    100
+  ],
+  "scale_native": [
+    100,
+    500,
+    1000
+  ],
+  "crash_probe": true,
+  "scale_preencoded": {
+    "declared_tracks": 1000,
+    "active_tracks": [
+      0,
+      50,
+      100,
+      250,
+      500,
+      1000
+    ],
+    "chunk_ms": 100,
+    "inactive_anchor_ms": 20
+  },
+  "version": "14.0.0",
+  "phase2": {
+    "active_file_integrity_gate": {
+      "partial_extension": ".mxf.partial",
+      "lock_extension": ".mxf.lock",
+      "normal_test": "scripts/mxf/10-file-lock-lifecycle.cmd",
+      "crash_test": "scripts/mxf/11-stale-lock-crash.cmd",
+      "recovery_assessment": "scripts/mxf/12-recover-stale-lock.cmd"
+    },
+    "identity_gates": {
+      "logical_continuity": "scripts/mxf/13-logical-track-continuity.cmd",
+      "embedded_track_identity": "scripts/mxf/15-embedded-track-identity.cmd",
+      "embedded_cross_file_continuity": "scripts/mxf/16-embedded-cross-file-continuity.cmd"
+    },
+    "file_manager_prearm_gate": {
+      "command": "scripts/mxf/17-file-manager-prearm-capacity.cmd",
+      "required_files": 100,
+      "precreate_lead_ms": 3000,
+      "ready_deadline_ms_before_window": 250,
+      "activation_dispatch_budget_ms": 250,
+      "no_create_on_boundary_path": true,
+      "failure_policy": "BOUNDARY_SPILL_REQUIRED"
+    },
+    "file_manager_loaded_prearm_gate": {
+      "command": "scripts/mxf/19-file-manager-loaded-prearm.cmd",
+      "current_files": 100,
+      "active_percent_min": 25,
+      "packet_bytes": 160,
+      "packet_interval_ms": 20,
+      "logging": "JSONL",
+      "database": "SQLite WAL",
+      "next_files": 100,
+      "precreate_lead_ms": 3000,
+      "ready_requires": [
+        "100 current file handles open",
+        "SQLite WAL ready",
+        "first DB transaction",
+        "first JSONL log write",
+        "first media write"
+      ],
+      "comparison": [
+        "baseline_precreate_and_arm_ms",
+        "loaded_precreate_and_arm_ms",
+        "loaded_delay_delta_ms",
+        "loaded_delay_delta_pct"
+      ]
+    },
+    "completion": {
+      "status": "COMPLETE_TARGET_VALIDATED",
+      "accepted_by_user": true,
+      "scope_note": "File Manager capability complete; crash/endurance/durability/recovery move to integrated system acceptance.",
+      "file_manager_loaded_gate": {
+        "result": "PASS",
+        "current_files": 100,
+        "active_media_percent": 25,
+        "next_files": 100,
+        "baseline_precreate_and_arm_ms": 392.791,
+        "loaded_precreate_and_arm_ms": 310.981,
+        "minimum_arming_margin_ms": 2681.857,
+        "activation_dispatch_ms": 5.28,
+        "concurrent_packets": 400,
+        "concurrent_payload_bytes": 64000,
+        "concurrent_log_events": 3,
+        "concurrent_db_transactions": 3,
+        "concurrent_db_rows": 75
+      }
+    }
+  },
+  "phase3": {
+    "minimal_recorder_one_cwp": {
+      "build": "scripts/recorder/01-build-recorder-host.cmd",
+      "smoke": "scripts/recorder/02-one-cwp-smoke.cmd",
+      "executable": "src/recorder-host/recorder-host.exe",
+      "simulator": "scripts/cwp/Invoke-OneCwpSimulator.ps1",
+      "rtsp_methods": [
+        "OPTIONS",
+        "ANNOUNCE",
+        "SETUP",
+        "RECORD",
+        "PAUSE",
+        "GET_PARAMETER",
+        "TEARDOWN"
+      ],
+      "media": {
+        "protocol": "RTP",
+        "payload_type": 8,
+        "codec": "PCMA",
+        "sample_rate_hz": 8000,
+        "packet_time_ms": 20
+      },
+      "storage_boundary": "appsrc -> mxfidmux -> appsink -> Win32 StorageWriter",
+      "active_file_lifecycle": [
+        "RECORDING_LOCKED",
+        "FINALIZING",
+        "CLOSED_COMPLETE"
+      ],
+      "identity": [
+        "DisplayName",
+        "LogicalTrackUUID",
+        "TrackInstanceUUID"
+      ],
+      "deferred_to_integrated_acceptance": [
+        "crash",
+        "durability_watermarks",
+        "recovery",
+        "endurance"
+      ]
+    }
+  },
+  "phase4": {
+    "radio_persistent_session": {
+      "smoke": "scripts/recorder/03-radio-persistent-session-smoke.cmd",
+      "simulator": "scripts/cwp/Invoke-RadioPersistentSessionSimulator.ps1",
+      "scenario": "scenarios/radio-persistent-01.ini",
+      "session_lifetime": "service enabled => one RTSP Session ID and one current-window writer; activity uses RECORD<->PAUSE; disable uses TEARDOWN",
+      "default_bursts": 4,
+      "default_burst_ms": 300,
+      "default_silence_ms": 600,
+      "default_keepalive_interval_ms": 200,
+      "paused_probe_packets_per_silence": 1,
+      "negative_media_gate_proof": "RTP received while PAUSED is counted but not pushed into MXF",
+      "keepalive_policy": "success counted in memory; one aggregate KEEPALIVE_OK evidence event at session close",
+      "session_header_validation": true,
+      "activity_signal_mapping": [
+        "SQU_ON/SQU_OFF",
+        "PTT_ON/PTT_OFF",
+        "none"
+      ],
+      "target_profile_note": "activity-signal mapping is PoC semantics; exact target ED-137 signaling remains profile-specific",
+      "deferred_to_integrated_acceptance": [
+        "target build",
+        "persistent-session smoke",
+        "crash",
+        "durability watermarks",
+        "recovery",
+        "endurance"
+      ]
+    }
+  },
+  "phase5": {
+    "multi_session_cwp_routing": {
+      "build": "scripts/recorder/01-build-recorder-host.cmd",
+      "smoke": "scripts/recorder/04-multi-cwp-routing-smoke.cmd",
+      "simulator": "scripts/cwp/Invoke-MultiCwpRoutingSimulator.ps1",
+      "scenario": "scenarios/multi-cwp-routing-01.ini",
+      "config": "config/recorder/multi-cwp-routing.ini",
+      "host_processes": 1,
+      "rtsp_listeners": 1,
+      "materialized_session_count": 6,
+      "compile_time_max_sessions": 64,
+      "compile_time_max_clients": 64,
+      "fd_set_size": 256,
+      "routing_authority": "session-map.tsv",
+      "route_binding": "ANNOUNCE URI -> preconfigured RecorderSession",
+      "rtp_dispatch": "bound UDP socket -> owning RecorderSession; no semantic lookup per packet",
+      "session_owned_resources": [
+        "RTSP Session ID/state",
+        "RTP socket/port",
+        "GStreamer pipeline",
+        "StorageWriter",
+        "LogicalTrackUUID",
+        "TrackInstanceUUID",
+        "counters/activity state"
+      ],
+      "route_local_teardown": true,
+      "routing_evidence": [
+        "ROUTE_BOUND",
+        "RTP_ROUTE_ACTIVE",
+        "ROUTE_COLLISION",
+        "ROUTE_REJECTED"
+      ],
+      "backward_compatible_single_session_cli": true,
+      "deferred_to_integrated_acceptance": [
+        "target build",
+        "Phase 3 regression",
+        "Phase 4 regression",
+        "six-session routing smoke",
+        "crash",
+        "durability watermarks",
+        "recovery",
+        "endurance",
+        "50/100 live-session stress"
+      ],
+      "route_local_finalization": "dedicated worker thread per closing route; RTP socket detached before EOS/footer/flush",
+      "materialized_logical_cwps": 5
+    }
+  },
+  "phase6": {
+    "capability": "minimal RTP Media Engine",
+    "command": "scripts/recorder/05-media-engine-smoke.cmd",
+    "simulator": "scripts/cwp/Invoke-MediaEngineImpairmentSimulator.ps1",
+    "config": "config/recorder/media-engine.ini",
+    "scenario": "scenarios/media-engine-impairment-01.ini",
+    "classification": [
+      "malformed RTP dropped",
+      "unsupported payload type dropped",
+      "duplicate sequence dropped",
+      "late/out-of-order sequence dropped",
+      "forward sequence gap counted",
+      "timestamp discontinuity counted",
+      "valid PCMA while RECORDING accepted"
+    ],
+    "expected_metrics": {
+      "packets_recorded": 18,
+      "sequence_gap_packets": 1,
+      "duplicates": 1,
+      "out_of_order": 1,
+      "malformed": 1,
+      "wrong_pt": 1,
+      "timestamp_discontinuities": 2
+    },
+    "target_validation": "not-run-current-turn; reserved for integrated Windows/GStreamer campaign"
+  },
+  "phase7": {
+    "window_rotation": {
+      "smoke": "scripts/recorder/06-window-rotation-smoke.cmd",
+      "config": "config/recorder/window-rotation.ini",
+      "contract": "Persistent RTSP session remains alive while physical MXF windows rotate at a PAUSE boundary.",
+      "preserves": [
+        "SessionId",
+        "LogicalTrackUUID",
+        "RTP socket",
+        "route binding"
+      ],
+      "renews": [
+        "TrackInstanceUUID",
+        "FileId",
+        "physical MXF path",
+        "StorageWriter",
+        "GStreamer pipeline"
+      ],
+      "events": [
+        "WINDOW_ROTATION_REQUESTED",
+        "WINDOW_CLOSING",
+        "WINDOW_CLOSED_COMPLETE",
+        "WINDOW_OPENED",
+        "WINDOW_ROTATED"
+      ],
+      "expected_segments": 2,
+      "rotate_after_pause_count": 2,
+      "rotate_max_count": 1,
+      "deferred": true
+    }
+  },
+  "phase8": {
+    "recording_gateway_sip_ingress": {
+      "status": "MATERIALIZED",
+      "gateway_boundary": "SIP/call semantics remain outside RecorderHost; Recorder receives RTSP/RTP/PCMA plus recording identity.",
+      "gateway_config": "config/gateway/sip-ingress.ini",
+      "recorder_config": "config/recorder/sip-gateway-ingress.ini",
+      "scenario": "scenarios/sip-gateway-01.ini",
+      "gateway_script": "scripts/gateway/Invoke-RecordingGatewaySipIngress.ps1",
+      "smoke_command": "scripts/recorder/07-recording-gateway-smoke.cmd",
+      "codec": "PCMA passthrough",
+      "sip_scope": "synthetic SIP-like lifecycle, not full SIP compliance",
+      "identity_extension": "telephone canonical identity includes call_leg_id to avoid simultaneous-call collapse",
+      "events": [
+        "SIP_INVITE_RECEIVED",
+        "SIP_RINGING",
+        "SIP_ANSWERED",
+        "GATEWAY_RECORDING_SESSION_OPENING",
+        "GATEWAY_RECORDING_SESSION_READY",
+        "GATEWAY_RTP_FORWARD_STARTED",
+        "GATEWAY_RTP_FORWARD_STOPPED",
+        "SIP_BYE_RECEIVED",
+        "GATEWAY_RECORDING_SESSION_CLOSING",
+        "GATEWAY_RECORDING_SESSION_CLOSED",
+        "GATEWAY_CALL_CLOSED"
+      ],
+      "acceptance_pending": true
+    }
+  },
+  "phase9": {
+    "service_perspective_matrix": {
+      "smoke": "scripts/recorder/08-service-perspective-matrix-smoke.cmd",
+      "config": "config/recorder/service-perspective-matrix.ini",
+      "scenario": "scenarios/service-perspective-matrix-01.ini",
+      "model": "one-service-one-mono-flow",
+      "cwp_ingress": "direct RTSP/RTP to RecorderHost",
+      "gateway_ingress": "only translated ingress such as SIP telephony or physical/legacy radio adapters",
+      "no_default_rx_tx_split": true,
+      "no_stereo_artificialization": true,
+      "identity_template": "identity-v1|service_type=<type>|service_id=<service>|endpoint_id=<endpoint>|media_flow=mono",
+      "telephone_identity_extension": "call_leg_id required when simultaneous telephone calls can share service/endpoint",
+      "metadata_not_tracks": [
+        "SQU",
+        "PTT",
+        "RECORD",
+        "PAUSE",
+        "RING",
+        "ANSWER",
+        "BYE",
+        "GAP",
+        "TOPOLOGY"
+      ],
+      "deferred_to_integrated_acceptance": [
+        "target build",
+        "Phase 3-8 regression",
+        "service perspective smoke",
+        "cross-file logical index",
+        "player perspective query"
+      ]
+    }
+  },
+  "phase10": {
+    "media_bank_builder": {
+      "status": "MATERIALIZED",
+      "purpose": "Prepare raw audio ingestion, silence-based cutting, role-hinted media bank organization, and mono-service conversation scenario manifests.",
+      "scripts": {
+        "init": "scripts/media-bank/20-media-bank-init.cmd",
+        "detect_segments": "scripts/media-bank/21-audio-detect-segments.cmd",
+        "cut_manifest": "scripts/media-bank/22-audio-cut-manifest.cmd",
+        "generate_conversation": "scripts/media-bank/23-conversation-generate.cmd",
+        "smoke": "scripts/media-bank/24-media-bank-smoke.cmd"
+      },
+      "media_bank_layout": {
+        "raw_radio": "media-bank/raw/radio-mixed",
+        "raw_telephone": "media-bank/raw/telephone-mixed",
+        "radio_controller": "media-bank/radio/controller",
+        "radio_pilot": "media-bank/radio/pilot",
+        "radio_unknown": "media-bank/radio/unknown",
+        "telephone_ring": "media-bank/telephone/tones/ring",
+        "telephone_busy": "media-bank/telephone/tones/busy",
+        "telephone_conversations": "media-bank/telephone/conversations"
+      },
+      "audio_rules": {
+        "target_sample_rate_hz": 8000,
+        "target_channels": 1,
+        "staging_format": "wav pcm_s16le",
+        "recorder_media_flow": "mono",
+        "recorder_track_policy": "one_service_one_mono_track",
+        "rx_tx_folder_policy": "allowed as source-role/staging metadata only; never creates Recorder RX/TX track split by default"
+      },
+      "detection": {
+        "method": "ffmpeg silencedetect",
+        "default_silence_db": "-35dB",
+        "default_silence_ms": 450,
+        "min_clip_ms": 700,
+        "max_clip_ms": 8000,
+        "speaker_hint_policy": "path/filename heuristic: controller, pilot, ring, busy, telephone, unknown; no certainty claim"
+      },
+      "conversation_generator": {
+        "output": "scenarios/generated/conversation-scenario.json",
+        "schema": "recorder-poc.conversation-scenario.v1",
+        "placeholder_mode": true,
+        "events": [
+          "SQU_ON",
+          "SQU_OFF"
+        ],
+        "later_emitters": [
+          "RTP PCMA mono",
+          "timeline signaling metadata"
+        ]
+      },
+      "deferred_to_user_audio_campaign": [
+        "real audio segmentation quality",
+        "manual review of unknown clips",
+        "speaker diarization/transcription if introduced later"
+      ]
+    }
+  },
+  "phase14": {
+    "playback_segment_export_gate": "scripts/playback/12-playback-segment-export-smoke.cmd",
+    "export_bundle": [
+      "export.wav",
+      "export-manifest.json",
+      "historical-playback-plan.json",
+      "source-map.csv",
+      "events.jsonl"
+    ],
+    "gap_policy": {
+      "only_audio": "omit_from_audio_keep_in_manifest",
+      "continuous": "synthesize_silence_marked_not_evidence"
+    },
+    "track_resolution": "LogicalTrackUUID + FileId + TrackInstanceUUID, TrackIndex as file-local fallback",
+    "service_audio_model": "mono"
+  }
+}

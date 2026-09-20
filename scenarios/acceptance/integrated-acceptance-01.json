@@ -1,0 +1,119 @@
+{
+  "phase": "22.0.0",
+  "name": "integrated-acceptance-01",
+  "description": "Deterministic integrated acceptance campaign definition spanning Phase 1 through Phase 21.",
+  "invariants": {
+    "cwp_path": "CWP -> RTSP/RTP direct -> Recorder",
+    "gateway_scope": "Telefonia SIP and physical/legacy radio translated ingress only",
+    "media_model": "one mono service flow per LogicalTrackUUID per MXF track",
+    "live_buffer_is_evidence": false,
+    "synthetic_silence_is_recorded_evidence": false
+  },
+  "gates": [
+    [
+      "01-network",
+      "scripts/network/04-smoke-test.cmd",
+      true
+    ],
+    [
+      "02-mxf-identity-file-manager",
+      "scripts/mxf/Invoke-FileManagerLoadedPrearm.ps1",
+      true
+    ],
+    [
+      "03-recorder-one-cwp",
+      "scripts/recorder/02-one-cwp-smoke.cmd",
+      true
+    ],
+    [
+      "04-radio-persistent-session",
+      "scripts/recorder/03-radio-persistent-session-smoke.cmd",
+      true
+    ],
+    [
+      "05-multi-session-routing",
+      "scripts/recorder/04-multi-cwp-routing-smoke.cmd",
+      true
+    ],
+    [
+      "06-media-engine-rtp-protection",
+      "scripts/recorder/05-media-engine-smoke.cmd",
+      true
+    ],
+    [
+      "07-window-rotation",
+      "scripts/recorder/06-window-rotation-smoke.cmd",
+      true
+    ],
+    [
+      "08-recording-gateway",
+      "scripts/recorder/07-recording-gateway-smoke.cmd",
+      true
+    ],
+    [
+      "09-service-perspective-matrix",
+      "scripts/recorder/08-service-perspective-matrix-smoke.cmd",
+      true
+    ],
+    [
+      "10-media-bank",
+      "scripts/media-bank/24-media-bank-smoke.cmd",
+      false
+    ],
+    [
+      "11-temporal-index",
+      "scripts/indexer/09-temporal-index-smoke.cmd",
+      true
+    ],
+    [
+      "12-observability-eventbus",
+      "scripts/observability/10-observability-event-bus-smoke.cmd",
+      true
+    ],
+    [
+      "13-historical-playback",
+      "scripts/playback/11-historical-playback-smoke.cmd",
+      true
+    ],
+    [
+      "14-segment-export",
+      "scripts/playback/12-playback-segment-export-smoke.cmd",
+      true
+    ],
+    [
+      "15-web-player-shell",
+      "scripts/player/13-web-player-shell-smoke.cmd",
+      true
+    ],
+    [
+      "16-player-interaction-modes",
+      "scripts/player/14-player-interaction-modes-smoke.cmd",
+      true
+    ],
+    [
+      "17-live-player-branch",
+      "scripts/player/15-live-player-branch-smoke.cmd",
+      true
+    ],
+    [
+      "18-evidence-bundle",
+      "scripts/export/16-export-evidence-bundle-smoke.cmd",
+      true
+    ],
+    [
+      "19-integrity-manifest-chain",
+      "scripts/integrity/17-integrity-manifest-chain-smoke.cmd",
+      true
+    ],
+    [
+      "20-fault-injection-recovery",
+      "scripts/fault/18-fault-injection-recovery-smoke.cmd",
+      true
+    ],
+    [
+      "21-progressive-stress",
+      "scripts/stress/19-progressive-stress-smoke.cmd",
+      false
+    ]
+  ]
+}

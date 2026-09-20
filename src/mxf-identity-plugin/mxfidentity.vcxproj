@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Release|x64"><Configuration>Release</Configuration><Platform>x64</Platform></ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <ProjectGuid>{7806F50F-2F4D-4A69-A48A-43FAE4A82714}</ProjectGuid>
+    <Keyword>Win32Proj</Keyword>
+    <RootNamespace>GstMxfIdentity</RootNamespace>
+    <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>v143</PlatformToolset>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ImportGroup Label="PropertySheets">
+    <Import Project="$(GSTREAMER_ROOT_X86_64)/share/vs/2010/libs/gstreamer-1.0.props" Condition="Exists('$(GSTREAMER_ROOT_X86_64)/share/vs/2010/libs/gstreamer-1.0.props')" />
+    <Import Project="$(GSTREAMER_ROOT_X86_64)/share/vs/2010/libs/gstreamer-base-1.0.props" Condition="Exists('$(GSTREAMER_ROOT_X86_64)/share/vs/2010/libs/gstreamer-base-1.0.props')" />
+    <Import Project="$(GSTREAMER_ROOT_X86_64)/share/vs/2010/libs/gstreamer-audio-1.0.props" Condition="Exists('$(GSTREAMER_ROOT_X86_64)/share/vs/2010/libs/gstreamer-audio-1.0.props')" />
+    <Import Project="$(GSTREAMER_ROOT_X86_64)/share/vs/2010/libs/gstreamer-video-1.0.props" Condition="Exists('$(GSTREAMER_ROOT_X86_64)/share/vs/2010/libs/gstreamer-video-1.0.props')" />
+  </ImportGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <OutDir>$(ProjectDir)bin\</OutDir>
+    <IntDir>$(ProjectDir)obj\</IntDir>
+    <TargetName>gstmxfidentity</TargetName>
+    <TargetExt>.dll</TargetExt>
+  </PropertyGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <Optimization>MaxSpeed</Optimization>
+      <PreprocessorDefinitions>GST_USE_UNSTABLE_API;VERSION=&quot;1.28.7-poc-2.0.14&quot;;PACKAGE=&quot;recorder-poc-mxfidentity&quot;;GST_PACKAGE_NAME=&quot;Recorder PoC MXF Identity&quot;;GST_PACKAGE_ORIGIN=&quot;local&quot;;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>$(ProjectDir)buildsrc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+    <Link><SubSystem>Windows</SubSystem></Link>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <ClCompile Include="buildsrc\mxf.c" />
+    <ClCompile Include="buildsrc\gstmxfelement.c" />
+    <ClCompile Include="buildsrc\mxful.c" />
+    <ClCompile Include="buildsrc\mxftypes.c" />
+    <ClCompile Include="buildsrc\mxfmetadata.c" />
+    <ClCompile Include="buildsrc\mxfessence.c" />
+    <ClCompile Include="buildsrc\mxfquark.c" />
+    <ClCompile Include="buildsrc\mxfmux.c" />
+    <ClCompile Include="buildsrc\mxfdemux.c" />
+    <ClCompile Include="buildsrc\mxfaes-bwf.c" />
+    <ClCompile Include="buildsrc\mxfmpeg.c" />
+    <ClCompile Include="buildsrc\mxfdv-dif.c" />
+    <ClCompile Include="buildsrc\mxfalaw.c" />
+    <ClCompile Include="buildsrc\mxfjpeg2000.c" />
+    <ClCompile Include="buildsrc\mxfd10.c" />
+    <ClCompile Include="buildsrc\mxfup.c" />
+    <ClCompile Include="buildsrc\mxfvc3.c" />
+    <ClCompile Include="buildsrc\mxfprores.c" />
+    <ClCompile Include="buildsrc\mxfvanc.c" />
+    <ClCompile Include="buildsrc\mxfcustom.c" />
+    <ClCompile Include="buildsrc\mxfffv1.c" />
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+</Project>

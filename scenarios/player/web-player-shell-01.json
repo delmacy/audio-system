@@ -1,0 +1,12 @@
+{
+  "schema": "recorder-poc.web-player-shell-smoke.v1",
+  "fixture": "web/player/fixtures/playback-plan.sample.json",
+  "expected": {
+    "services_min": 3,
+    "media_segments_min": 1,
+    "gaps_min": 1,
+    "events_min": 1,
+    "base_rx_tx_split": false,
+    "media_flow": "mono"
+  }
+}

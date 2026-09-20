@@ -1,0 +1,30 @@
+{
+  "scenario_id": "closure-backlog-01",
+  "phase": "25.0.0",
+  "purpose": "Validate that closure and agent handoff files preserve the full PoC scope and critical invariants.",
+  "required_files": [
+    "AGENTS.md",
+    "CODEX.md",
+    "docs/phase25/closure-open-risks-next-implementation-backlog.md",
+    "docs/phase25/acceptance.md",
+    "config/closure/closure-backlog.ini"
+  ],
+  "required_terms": [
+    "CWP",
+    "Gateway",
+    "LogicalTrackUUID",
+    "TrackInstanceUUID",
+    "TrackIndex",
+    "NOT_RUN",
+    "live buffer is not evidence",
+    "synthetic silence",
+    "one mono",
+    "open risks",
+    "next implementation backlog"
+  ],
+  "must_not_claim": [
+    "production ready",
+    "ED-137 certified",
+    "all gates passed"
+  ]
+}

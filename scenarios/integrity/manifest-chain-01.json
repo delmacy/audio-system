@@ -1,0 +1,17 @@
+{
+  "schema": "recorder-poc.integrity-manifest-chain.scenario.v1",
+  "scenario_id": "manifest-chain-01",
+  "service_id": "RADIO-121500",
+  "media_flow": "mono",
+  "logical_track_uuid": "11111111-1111-5111-8111-111111111111",
+  "segments": [
+    {
+      "file_id": "file-20260919-130000-0001",
+      "track_instance_uuid": "aaaaaaaa-aaaa-7aaa-8aaa-aaaaaaaaaaaa",
+      "track_index": 2,
+      "window_start_utc": "2026-09-19T13:00:00Z",
+      "window_end_utc": "2026-09-19T14:00:00Z",
+      "segment_sequence": 0
+    }
+  ]
+}

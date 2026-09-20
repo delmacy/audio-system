@@ -1,0 +1,14 @@
+{
+  "schema": "recorder-poc.player-interaction-modes-scenario.v1",
+  "phase": "16.0.0",
+  "name": "player-interaction-modes-01",
+  "service_model": "one-service-one-mono-flow-one-logical-track",
+  "modes": ["continuous", "only_audio", "only_activity"],
+  "expected": {
+    "has_explicit_gap": true,
+    "has_event_overlay": true,
+    "has_in_out_selection": true,
+    "no_rx_tx_split": true,
+    "no_stereo_artificial": true
+  }
+}

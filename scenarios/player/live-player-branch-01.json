@@ -1,0 +1,19 @@
+{
+  "schema": "recorder-poc.phase17.live-player-branch.scenario.v1",
+  "name": "live-player-branch-01",
+  "services": [
+    {
+      "service_id": "121500",
+      "display_name": "RADIO 121.500",
+      "logical_track_uuid": "7581bb95-0000-5000-9000-000000121500",
+      "media_flow": "mono"
+    }
+  ],
+  "expected": {
+    "live_frames": 12,
+    "stall_events": 1,
+    "recovered_events": 1,
+    "partial_mxf_reads": 0,
+    "evidence_audio_from_live_buffer": false
+  }
+}

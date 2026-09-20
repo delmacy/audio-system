@@ -1,0 +1,28 @@
+{
+  "scenario_id": "final-poc-packaging-01",
+  "phase": 24,
+  "version": "24.0.0",
+  "purpose": "Validate release-candidate packaging completeness without executing recorder acceptance gates.",
+  "required_files": [
+    "docs/phase24/final-poc-packaging-release-candidate.md",
+    "docs/phase24/acceptance.md",
+    "config/release/final-poc-packaging.ini",
+    "scripts/release/22-final-poc-packaging-smoke.cmd",
+    "scripts/release/Invoke-FinalPocPackagingSmoke.ps1",
+    "CHANGELOG-PHASE24-24.0.0.md"
+  ],
+  "required_existing_commands": [
+    "scripts/runbook/21-operator-runbook-smoke.cmd",
+    "scripts/acceptance/20-integrated-acceptance-plan-smoke.cmd",
+    "scripts/stress/19-progressive-stress-smoke.cmd",
+    "scripts/integrity/17-integrity-manifest-chain-smoke.cmd",
+    "scripts/export/16-export-evidence-bundle-smoke.cmd"
+  ],
+  "forbidden_assumptions": [
+    "NOT_RUN treated as PASS",
+    "live buffer treated as evidence",
+    "synthetic silence treated as recorded audio",
+    "fixture treated as evidence",
+    "production readiness claimed"
+  ]
+}

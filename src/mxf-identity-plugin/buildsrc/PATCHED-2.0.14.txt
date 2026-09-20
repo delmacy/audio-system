@@ -1,0 +1,4 @@
+﻿Upstream: GStreamer 1.28.7 / subprojects/gst-plugins-bad/gst/mxf
+Factory: mxfidmux
+Patch: per-request-pad track-name, logical-track-uuid, track-instance-uuid
+Serialization: MXF Track Name only; structural IDs are not overloaded.

@@ -1,0 +1,22 @@
+{
+  "scenario_id": "operator-runbook-01",
+  "phase": "23.0.0",
+  "purpose": "Validate runbook package completeness and critical operating language.",
+  "required_terms": [
+    "CWP simulator -> RTSP/RTP -> Recorder",
+    "Recording Gateway -> RTSP/RTP -> Recorder",
+    "1 service = 1 mono RTP/UDP media flow = 1 LogicalTrackUUID = 1 MXF track",
+    "live preview buffer",
+    "synthetic silence",
+    "BLOCKED",
+    "FAIL_SILENT_LOSS"
+  ],
+  "required_files": [
+    "docs/phase23/operator-runbook-deployment-notes.md",
+    "docs/phase23/acceptance.md",
+    "config/runbook/operator-runbook.ini",
+    "scenarios/runbook/operator-runbook-01.json",
+    "scripts/runbook/21-operator-runbook-smoke.cmd",
+    "scripts/runbook/Invoke-OperatorRunbookSmoke.ps1"
+  ]
+}

@@ -1,0 +1,31 @@
+{
+  "schema": "recorder-poc.progressive-stress.v1",
+  "scenario_id": "progressive-stress-01",
+  "media_model": {
+    "media_flow": "mono",
+    "one_service_one_logical_track": true,
+    "rx_tx_track_split_allowed": false
+  },
+  "levels": [
+    { "level": "L1", "services": 1, "cwp_direct": 1, "gateway_translated": 0, "fault_overlay": "none" },
+    { "level": "L2", "services": 5, "cwp_direct": 4, "gateway_translated": 1, "fault_overlay": "none" },
+    { "level": "L3", "services": 10, "cwp_direct": 8, "gateway_translated": 2, "fault_overlay": "rtp_loss_minor" },
+    { "level": "L4", "services": 30, "cwp_direct": 24, "gateway_translated": 6, "fault_overlay": "mixed_minor" },
+    { "level": "L5", "services": 50, "cwp_direct": 40, "gateway_translated": 10, "fault_overlay": "mixed_operational" },
+    { "level": "L6", "services": 100, "cwp_direct": 80, "gateway_translated": 20, "fault_overlay": "capacity_challenge", "optional": true }
+  ],
+  "fault_overlays": {
+    "none": [],
+    "rtp_loss_minor": ["rtp_loss_1pct", "sequence_gap_expected"],
+    "mixed_minor": ["rtp_loss_1pct", "duplicate_packets", "indexer_restart"],
+    "mixed_operational": ["rtp_loss_2pct", "out_of_order_packets", "observability_degraded", "export_retry"],
+    "capacity_challenge": ["rtp_loss_2pct", "out_of_order_packets", "indexer_restart", "partial_file_recovery", "observability_degraded"]
+  },
+  "acceptance": {
+    "p0_drop_allowed": false,
+    "cross_contamination_allowed": false,
+    "silent_loss_allowed": false,
+    "false_evidence_allowed": false,
+    "degraded_expected_allowed": true
+  }
+}
