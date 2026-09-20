@@ -12,9 +12,10 @@ import { PrimitiveCatalogSection } from '@/features/components/PrimitiveCatalogS
 import { BlockPrimitiveCatalogSection } from '@/features/components/BlockPrimitiveCatalogSection'
 import { ShadcnCatalogSection } from '@/features/components/ShadcnCatalogSection'
 import { FormPrimitiveCatalogSection } from '@/features/components/FormPrimitiveCatalogSection'
+import { TimelineCatalogSection } from '@/features/components/TimelineCatalogSection'
 import { SIM_CWPS, type SimStatus, type SimulatorMode } from '@/features/simulator/model'
 
-type CatalogTab = 'cwp' | 'radios' | 'telephones' | 'recorder' | 'sip' | 'player' | 'primitives' | 'fields' | 'shadcn' | 'blocks' | 'elements'
+type CatalogTab = 'cwp' | 'radios' | 'telephones' | 'recorder' | 'sip' | 'player' | 'primitives' | 'fields' | 'timeline' | 'shadcn' | 'blocks' | 'elements'
 
 const CATALOG_TABS: { id: CatalogTab; label: string }[] = [
   { id: 'cwp', label: 'CWP' },
@@ -25,6 +26,7 @@ const CATALOG_TABS: { id: CatalogTab; label: string }[] = [
   { id: 'player', label: 'Player' },
   { id: 'primitives', label: 'Primitivos' },
   { id: 'fields', label: 'Fields' },
+  { id: 'timeline', label: 'Timeline' },
   { id: 'shadcn', label: 'shadcn/UI' },
   { id: 'blocks', label: 'Blocos' },
   { id: 'elements', label: 'Elementos' },
@@ -157,9 +159,11 @@ export function ComponentCatalogView({ mode, status, events }: {
 
       {catalogTab === 'fields' && <FormPrimitiveCatalogSection number="08" />}
 
-      {catalogTab === 'shadcn' && <ShadcnCatalogSection number="09" />}
+      {catalogTab === 'timeline' && <TimelineCatalogSection number="09" />}
 
-      {catalogTab === 'blocks' && <BlockPrimitiveCatalogSection number="10" />}
+      {catalogTab === 'shadcn' && <ShadcnCatalogSection number="10" />}
+
+      {catalogTab === 'blocks' && <BlockPrimitiveCatalogSection number="11" />}
 
       {catalogTab === 'elements' && <section className="catalog-section">
         <div className="catalog-section-title"><div><span>11</span><h2>Elementos genéricos</h2></div><p>Peças não vinculadas a uma entidade específica.</p></div>
