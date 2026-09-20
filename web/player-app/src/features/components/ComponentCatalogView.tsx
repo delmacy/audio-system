@@ -7,6 +7,7 @@ import { RecorderFull, RecorderStatus, RecorderSummary, RecorderThumb, RecorderT
 import { SipFull, SipStatus, SipSummary, SipThumb, SipThumbEdit } from '@/representations/sip'
 import { PlayerInline, PlayerMini } from '@/representations/player'
 import { EventsBlock } from '@/features/simulator/blocks/EventsBlock'
+import { SimulatorActionBarBlock } from '@/features/simulator/blocks/SimulatorActionBarBlock'
 import { SideBlock } from '@/features/simulator/blocks/SideBlock'
 import { ModeSwitch } from '@/features/simulator/elements/ModeSwitch'
 import { SummaryCard } from '@/features/simulator/elements/SummaryCard'
@@ -19,6 +20,7 @@ export function ComponentCatalogView({ mode, status, events }: {
 }) {
   const [previewMode, setPreviewMode] = useState<SimulatorMode>(mode)
   const [expanded, setExpanded] = useState<string[]>(['cwp-a01'])
+  const [previewStatus, setPreviewStatus] = useState<SimStatus>(status)
   const sample = SIM_CWPS[0]
   const sampleRadio = sample[previewMode].services.find(service => service.kind === 'RADIO')!
   const sampleTel = sample[previewMode].services.find(service => service.kind === 'TEL')!
@@ -117,13 +119,28 @@ export function ComponentCatalogView({ mode, status, events }: {
       </section>
 
       <section className="catalog-section">
-        <div className="catalog-section-title"><div><span>06</span><h2>Blocos compostos</h2></div><p>As features montam representações conforme a necessidade.</p></div>
+        <div className="catalog-section-title"><div><span>06</span><h2>Barra de Simulação</h2></div><p>Bloco operacional isolado, com estado local apenas para revisão visual.</p></div>
+        <div className="catalog-action-bar-preview">
+          <SimulatorActionBarBlock
+            mode={previewMode}
+            status={previewStatus}
+            onStart={() => setPreviewStatus('running')}
+            onPause={() => setPreviewStatus('paused')}
+            onStop={() => setPreviewStatus('stopped')}
+            onFault={() => setPreviewStatus('running')}
+            openPlayer={() => undefined}
+          />
+        </div>
+      </section>
+
+      <section className="catalog-section">
+        <div className="catalog-section-title"><div><span>07</span><h2>Blocos compostos</h2></div><p>As features montam representações conforme a necessidade.</p></div>
         <div className="catalog-isolated wide"><SideBlock side="A" mode={previewMode} expanded={expanded} setExpanded={setExpanded} /></div>
         <div className="catalog-isolated events-preview"><EventsBlock events={events.slice(0, 6)} /></div>
       </section>
 
       <section className="catalog-section">
-        <div className="catalog-section-title"><div><span>07</span><h2>Elementos genéricos</h2></div><p>Peças não vinculadas a uma entidade específica.</p></div>
+        <div className="catalog-section-title"><div><span>08</span><h2>Elementos genéricos</h2></div><p>Peças não vinculadas a uma entidade específica.</p></div>
         <div className="catalog-summary-grid">
           <SummaryCard icon={ClipboardList} title="CWP's" value="4" detail="ativos de 4" />
           <SummaryCard icon={Radio} title="Rádios" value="8" detail="ativos de 8" tone="green" />
