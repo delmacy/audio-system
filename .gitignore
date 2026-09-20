@@ -40,3 +40,7 @@ Thumbs.db
 
 # Local machine manifests
 scenarios/player/multi-track-audio-injection.local.json
+
+# Python bytecode
+__pycache__/
+*.py[cod]
