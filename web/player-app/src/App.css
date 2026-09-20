@@ -1428,3 +1428,11 @@ button:focus-visible,input:focus-visible,select:focus-visible,[role=slider]:focu
 .recorded-track-playback-playing{--playback-state:#18a35b}
 .recorded-track-playback-error{--playback-state:#d94343}
 .recorded-track-playback-loading>span{animation:dataSourcePulse 1.2s ease-in-out infinite}
+
+.recorded-track-file{
+  display:block;
+  margin-top:2px;
+  color:#6e8196;
+  font-size:8px;
+  font-family:ui-monospace,SFMono-Regular,Consolas,monospace;
+}

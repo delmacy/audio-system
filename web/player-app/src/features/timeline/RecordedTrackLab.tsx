@@ -18,6 +18,10 @@ type RecordedTrack = {
   lastUtc: string | null
   indexedCount: number
   auditCount: number
+  trackInstanceUUID: string | null
+  runId: string | null
+  mxfName: string | null
+  trackIndex: number | null
 }
 
 function summarizeTrack(groupLabel: string, kind: string, track: TimelineTrack): RecordedTrack {
@@ -29,6 +33,8 @@ function summarizeTrack(groupLabel: string, kind: string, track: TimelineTrack):
   const ordered = [...track.segments].sort((a, b) => Date.parse(a.startUtc) - Date.parse(b.startUtc))
   const indexedCount = track.segments.filter(segment => segment.source === 'sqlite_closed_mxf').length
   const auditCount = segmentCount - indexedCount
+
+  const latestSegment = ordered[ordered.length - 1] ?? null
 
   return {
     id: track.id,
@@ -42,6 +48,10 @@ function summarizeTrack(groupLabel: string, kind: string, track: TimelineTrack):
     lastUtc: ordered.at(-1)?.endUtc ?? null,
     indexedCount,
     auditCount,
+    trackInstanceUUID: latestSegment?.trackInstanceUUID ?? null,
+    runId: latestSegment?.runId ?? null,
+    mxfName: latestSegment?.mxfName ?? null,
+    trackIndex: latestSegment?.trackIndex ?? null,
   }
 }
 
@@ -241,7 +251,7 @@ export function RecordedTrackLab() {
     <div className={`recorded-track-status recorded-track-status-${state}`}>
       <span className="recorded-track-status-dot" />
       <div>
-        <strong>{source === 'real' ? '/api/timeline' : 'DEMO_TIMELINE'}</strong>
+        <strong>{source === 'real' ? '/api/timeline?run=latest' : 'DEMO_TIMELINE'}</strong>
         <small>
           {state === 'loading'
             ? 'carregando trilhas gravadas...'
@@ -310,6 +320,9 @@ export function RecordedTrackLab() {
             <small>{track.kind} · {track.group}</small>
             <strong>{track.label}</strong>
             <code title={track.logicalTrackUUID}>{track.logicalTrackUUID}</code>
+            {track.mxfName && <small className="recorded-track-file">
+              {track.mxfName}{track.trackIndex !== null ? ` · track ${track.trackIndex}` : ''}
+            </small>}
           </div>
 
           <div className="recorded-track-metric">
