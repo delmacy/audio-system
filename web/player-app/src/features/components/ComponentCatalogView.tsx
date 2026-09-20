@@ -6,9 +6,6 @@ import { TelephoneFull, TelephoneSummary, TelephoneThumb, TelephoneThumbEdit } f
 import { RecorderFull, RecorderStatus, RecorderSummary, RecorderThumb, RecorderThumbEdit } from '@/representations/recorder'
 import { SipFull, SipStatus, SipSummary, SipThumb, SipThumbEdit } from '@/representations/sip'
 import { PlayerInline, PlayerMini } from '@/representations/player'
-import { EventsBlock } from '@/features/simulator/blocks/EventsBlock'
-import { SimulatorActionBarBlock } from '@/features/simulator/blocks/SimulatorActionBarBlock'
-import { SideBlock } from '@/features/simulator/blocks/SideBlock'
 import { ModeSwitch } from '@/features/simulator/elements/ModeSwitch'
 import { SummaryCard } from '@/features/simulator/elements/SummaryCard'
 import { PrimitiveCatalogSection } from '@/features/components/PrimitiveCatalogSection'
@@ -37,7 +34,6 @@ export function ComponentCatalogView({ mode, status, events }: {
 }) {
   const [previewMode, setPreviewMode] = useState<SimulatorMode>(mode)
   const [expanded, setExpanded] = useState<string[]>(['cwp-a01'])
-  const [previewStatus, setPreviewStatus] = useState<SimStatus>(status)
   const [catalogTab, setCatalogTab] = useState<CatalogTab>('cwp')
 
   const sample = SIM_CWPS[0]
@@ -158,28 +154,10 @@ export function ComponentCatalogView({ mode, status, events }: {
 
       {catalogTab === 'shadcn' && <ShadcnCatalogSection number="08" />}
 
-      {catalogTab === 'blocks' && <>
-        <section className="catalog-section">
-          <div className="catalog-section-title"><div><span>09</span><h2>Barra de Simulação</h2></div><p>Bloco operacional isolado e interativo.</p></div>
-          <div className="catalog-action-bar-preview">
-            <SimulatorActionBarBlock
-              mode={previewMode}
-              status={previewStatus}
-              onStart={() => setPreviewStatus('running')}
-              onPause={() => setPreviewStatus('paused')}
-              onStop={() => setPreviewStatus('stopped')}
-              onFault={() => setPreviewStatus('running')}
-              openPlayer={() => undefined}
-            />
-          </div>
-        </section>
-
-        <section className="catalog-section">
-          <div className="catalog-section-title"><div><span>10</span><h2>Blocos compostos</h2></div><p>Composições maiores usadas pelas views.</p></div>
-          <div className="catalog-isolated wide"><SideBlock side="A" mode={previewMode} expanded={expanded} setExpanded={setExpanded} /></div>
-          <div className="catalog-isolated events-preview"><EventsBlock events={events.slice(0, 6)} /></div>
-        </section>
-      </>}
+      {catalogTab === 'blocks' && <section className="catalog-section">
+        <div className="catalog-section-title"><div><span>09</span><h2>Blocos compostos</h2></div><p>Reservado para composições futuras.</p></div>
+        <div className="catalog-empty-state">Nenhum bloco composto catalogado ainda.</div>
+      </section>}
 
       {catalogTab === 'elements' && <section className="catalog-section">
         <div className="catalog-section-title"><div><span>11</span><h2>Elementos genéricos</h2></div><p>Peças não vinculadas a uma entidade específica.</p></div>
