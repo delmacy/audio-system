@@ -409,3 +409,49 @@ button:focus-visible,input:focus-visible,select:focus-visible,[role=slider]:focu
 .themed-slider-cell{width:100%;display:grid;grid-template-columns:minmax(120px,1fr) auto;gap:10px;align-items:center}
 .themed-slider-cell span{font-size:11px;color:#64788f}
 @media(max-width:950px){.themed-ui-variant-grid{grid-template-columns:1fr}}
+
+
+/* Primitive visual blocks */
+.block-primitive-grid{display:grid;grid-template-columns:repeat(3,minmax(220px,1fr));gap:10px}
+.block-specimen .primitive-specimen-preview{min-height:84px;width:100%}
+.primitive-block{
+  --block-border:#1677ec;
+  --block-fill:#fff;
+  --block-fg:#203955;
+  width:100%;
+  min-height:70px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  border:2px solid var(--block-border);
+  border-radius:11px;
+  background:var(--block-fill);
+  color:var(--block-fg);
+  padding:14px;
+  box-shadow:0 4px 14px color-mix(in srgb,var(--block-border) 5%,transparent);
+  transition:border-color .15s ease,background .15s ease,box-shadow .15s ease;
+}
+.primitive-block>span{font-size:10px;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;overflow-wrap:anywhere;text-align:center}
+
+.primitive-block-border-blue{--block-border:#1677ec}
+.primitive-block-border-gray{--block-border:#7d8a9a}
+.primitive-block-border-red{--block-border:#d94343}
+.primitive-block-border-green{--block-border:#18a35b}
+.primitive-block-border-yellow{--block-border:#e5a318}
+.primitive-block-border-purple{--block-border:#7c5ce0}
+
+.primitive-block-fill-white{--block-fill:#fff}
+.primitive-block-fill-blue{--block-fill:#eef6ff}
+.primitive-block-fill-gray{--block-fill:#f1f4f7}
+.primitive-block-fill-red{--block-fill:#fff0f0}
+.primitive-block-fill-green{--block-fill:#eaf8f0}
+.primitive-block-fill-yellow{--block-fill:#fff7df}
+.primitive-block-fill-purple{--block-fill:#f2efff}
+
+.primitive-block-motion-pulse{animation:primitiveBlockPulse 1.7s ease-in-out infinite}
+@keyframes primitiveBlockPulse{
+  0%,100%{box-shadow:0 0 0 0 color-mix(in srgb,var(--block-border) 0%,transparent),0 4px 14px color-mix(in srgb,var(--block-border) 5%,transparent)}
+  50%{box-shadow:0 0 0 7px color-mix(in srgb,var(--block-border) 12%,transparent),0 7px 20px color-mix(in srgb,var(--block-border) 10%,transparent)}
+}
+@media(prefers-reduced-motion:reduce){.primitive-block-motion-pulse{animation:none}}
+@media(max-width:1150px){.block-primitive-grid{grid-template-columns:repeat(2,minmax(220px,1fr))}}
