@@ -102,3 +102,22 @@ button:focus-visible,input:focus-visible,select:focus-visible,[role=slider]:focu
 .rep-cwp-edit-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.rep-cwp-edit-grid label{display:flex;flex-direction:column;gap:5px;font-size:11px;color:#63758c;font-weight:650}.rep-cwp-edit-grid label.wide{grid-column:1/-1}.rep-cwp-edit-grid input,.rep-cwp-edit-grid select,.rep-cwp-edit-grid textarea{width:100%;border:1px solid #cfdae7;border-radius:7px;background:#fff;padding:9px;color:#223c5d;font-size:12px}.rep-cwp-edit-grid textarea{min-height:72px;resize:vertical}
 .rep-cwp-edit-actions{display:flex;justify-content:flex-end;gap:9px;margin-top:14px}.rep-cwp-edit-actions>button{border:1px solid #cfddeb;background:#fff;color:#334b67;border-radius:8px;padding:9px 12px}.rep-cwp-save-button{border-color:#bcd6f3!important;background:#eef7ff!important;color:#0f73e6!important;font-weight:750;display:flex;align-items:center;gap:6px}
 .cwp-main-static{cursor:default}.cwp-main-static:hover{background:#fff}
+
+
+/* Radio / Telephone reusable representations */
+.rep-service-thumb{width:230px;min-height:118px;display:flex;flex-direction:column;align-items:flex-start;gap:7px;border:1px solid #d7e2ef;background:#fff;border-radius:12px;padding:14px;color:#13253f;text-align:left}
+.rep-service-thumb:hover{border-color:#8abcf2;background:#f7fbff}
+.rep-service-thumb.radio{border-left:3px solid #1d79e8}.rep-service-thumb.tel{border-left:3px solid #17a36b}
+.rep-service-thumb.edit{border-style:dashed}
+.rep-service-thumb .rep-thumb-icon{width:36px;height:36px;border-radius:9px;background:#edf6ff;color:#1677ec}
+.rep-service-thumb.tel .rep-thumb-icon{background:#edf9f3;color:#16915e}
+.rep-service-thumb small,.rep-service-thumb>span:last-child{font-size:11px;color:#687c92}
+.rep-service-thumb>span:last-child{display:flex;align-items:center;gap:6px}
+.rep-service-full{background:#fff;border:1px solid #d7e2ef;border-radius:11px;padding:14px;box-shadow:0 8px 18px #102b4a0a}
+.rep-service-full.radio{border-left:3px solid #1d79e8}.rep-service-full.tel{border-left:3px solid #17a36b}
+.rep-service-full>header{display:flex;align-items:center;gap:10px}.rep-service-full>header>svg{color:#0f73e6}.rep-service-full.tel>header>svg{color:#16915e}.rep-service-full>header>div{display:flex;flex-direction:column}.rep-service-full>header strong{font-size:16px}.rep-service-full>header small{font-size:11px;color:#16824d;margin-top:2px}.rep-service-full>header small .status-dot{width:7px;height:7px;margin-right:5px}
+.rep-service-full dl{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px;margin:12px 0 0}.rep-service-full dl>div{border:1px solid #e3ebf4;border-radius:8px;padding:9px;background:#fbfdff}.rep-service-full dt{font-size:10px;color:#72849a}.rep-service-full dd{margin:3px 0 0;font-size:12px;color:#233b5a;font-weight:650;overflow-wrap:anywhere}
+.rep-service-modal{width:min(580px,95vw);max-height:90vh;overflow:auto;background:#f7fbff;border:1px solid #c9d9ea;border-radius:14px;box-shadow:0 24px 70px rgba(12,31,53,.3);padding:16px}
+.rep-service-modal>header{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}.rep-service-modal>header>div{display:flex;flex-direction:column}.rep-service-modal>header span{font-size:10px;text-transform:uppercase;letter-spacing:.1em;color:#71859d}.rep-service-modal>header strong{font-size:18px;color:#142b48}.rep-service-modal>header button{display:grid;place-items:center;width:34px;height:34px;border:1px solid #d7e2ef;border-radius:8px;background:#fff;color:#405775}
+.rep-service-edit-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.rep-service-edit-grid label{display:flex;flex-direction:column;gap:5px;font-size:11px;color:#63758c;font-weight:650}.rep-service-edit-grid label.wide{grid-column:1/-1}.rep-service-edit-grid input,.rep-service-edit-grid select{width:100%;border:1px solid #cfdae7;border-radius:7px;background:#fff;padding:9px;color:#223c5d;font-size:12px}
+@media(max-width:700px){.rep-service-full dl{grid-template-columns:1fr}.rep-service-edit-grid{grid-template-columns:1fr}.rep-service-edit-grid label.wide{grid-column:auto}}
