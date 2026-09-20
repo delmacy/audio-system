@@ -23,16 +23,69 @@ function windowMinutes(data: TimelineData) {
   return Number.isFinite(start) && Number.isFinite(end) && end > start ? (end - start) / 60000 : 1
 }
 
+type PreviewWindow = 'full' | '30s' | '10s'
+
+function previewBounds(data: TimelineData, mode: PreviewWindow) {
+  const fullStart = Date.parse(data.windowStartUtc)
+  const fullEnd = Date.parse(data.windowEndUtc)
+  const latest = data.latestAvailableUtc ? Date.parse(data.latestAvailableUtc) : fullEnd
+  const end = Number.isFinite(latest) ? Math.min(fullEnd, latest) : fullEnd
+  const spanMs = mode === '10s' ? 10_000 : mode === '30s' ? 30_000 : Math.max(1, fullEnd - fullStart)
+  const start = mode === 'full' ? fullStart : Math.max(fullStart, end - spanMs)
+  return { start, end: mode === 'full' ? fullEnd : end }
+}
+
+function formatAxisTime(value: number, includeDate = false) {
+  const date = new Date(value)
+  return new Intl.DateTimeFormat('pt-BR', {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    ...(includeDate ? { day: '2-digit', month: '2-digit' } : {}),
+  }).format(date)
+}
+
 function TimelineObservedPreview({ data }: { data: TimelineData }) {
-  const duration = windowMinutes(data)
+  const [windowMode, setWindowMode] = useState<PreviewWindow>('10s')
+  const bounds = previewBounds(data, windowMode)
+  const durationMs = Math.max(1, bounds.end - bounds.start)
   const tracks = data.groups.flatMap(group =>
-    group.tracks.map(track => ({ group: group.label, kind: group.kind, track }))
+    group.tracks
+      .map(track => ({ group: group.label, kind: group.kind, track }))
+      .filter(({ track }) => track.segments.some(segment => {
+        const start = Date.parse(segment.startUtc)
+        const end = Date.parse(segment.endUtc)
+        return start < bounds.end && end > bounds.start
+      }))
+  )
+  const tickCount = windowMode === '10s' ? 10 : windowMode === '30s' ? 6 : 4
+  const ticks = Array.from({ length: tickCount + 1 }, (_, index) =>
+    bounds.start + (durationMs * index) / tickCount
   )
 
   return <div className="timeline-observed-preview" id="timeline_observed_preview">
     <div className="timeline-observed-preview-head">
-      <strong>UI renderizada</strong>
-      <span>{tracks.length} tracks · {countSegments(data)} clips</span>
+      <div>
+        <strong>UI renderizada</strong>
+        <span>{tracks.length} tracks visíveis · {countSegments(data)} clips recebidos</span>
+      </div>
+      <div className="timeline-observed-window-switch" role="group" aria-label="Janela visual">
+        <button type="button" className={windowMode === '10s' ? 'active' : ''} onClick={() => setWindowMode('10s')}>10 s</button>
+        <button type="button" className={windowMode === '30s' ? 'active' : ''} onClick={() => setWindowMode('30s')}>30 s</button>
+        <button type="button" className={windowMode === 'full' ? 'active' : ''} onClick={() => setWindowMode('full')}>Completa</button>
+      </div>
+    </div>
+
+    <div className="timeline-observed-axis">
+      <div className="timeline-observed-axis-spacer">
+        <strong>{windowMode === 'full' ? 'janela' : 'foco recente'}</strong>
+        <small>{formatAxisTime(bounds.start)} → {formatAxisTime(bounds.end)}</small>
+      </div>
+      <div className="timeline-observed-axis-scale">
+        {ticks.map((tick, index) => <span key={tick} style={{ left: `${(index / tickCount) * 100}%` }}>
+          {formatAxisTime(tick)}
+        </span>)}
+      </div>
     </div>
 
     {tracks.length === 0 ? (
@@ -46,8 +99,13 @@ function TimelineObservedPreview({ data }: { data: TimelineData }) {
           </div>
           <div className="timeline-observed-lane">
             {track.segments.map(segment => {
-              const left = Math.max(0, Math.min(100, (segment.start / duration) * 100))
-              const width = Math.max(.35, Math.min(100 - left, ((segment.end - segment.start) / duration) * 100))
+              const segmentStart = Date.parse(segment.startUtc)
+              const segmentEnd = Date.parse(segment.endUtc)
+              if (segmentStart >= bounds.end || segmentEnd <= bounds.start) return null
+              const clippedStart = Math.max(bounds.start, segmentStart)
+              const clippedEnd = Math.min(bounds.end, segmentEnd)
+              const left = Math.max(0, Math.min(100, ((clippedStart - bounds.start) / durationMs) * 100))
+              const width = Math.max(.55, Math.min(100 - left, ((clippedEnd - clippedStart) / durationMs) * 100))
               return <span
                 key={segment.id}
                 className={`timeline-observed-clip ${segment.source === 'sqlite_closed_mxf' ? 'indexed' : 'audit'}`}

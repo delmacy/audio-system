@@ -1293,3 +1293,97 @@ button:focus-visible,input:focus-visible,select:focus-visible,[role=slider]:focu
 @media(prefers-reduced-motion:reduce){
   .recorded-track-status-loading .recorded-track-status-dot{animation:none}
 }
+
+
+/* Timeline observed focus window */
+.timeline-observed-preview-head>div:first-child{
+  min-width:0;
+  display:flex;
+  flex-direction:column;
+  gap:2px;
+}
+.timeline-observed-window-switch{
+  display:flex;
+  align-items:center;
+  gap:5px;
+  flex:none;
+}
+.timeline-observed-window-switch button{
+  height:27px;
+  border:1px solid #d5e0ed;
+  border-radius:7px;
+  background:#fff;
+  color:#536a84;
+  padding:0 8px;
+  font-size:9px;
+  font-weight:750;
+}
+.timeline-observed-window-switch button.active{
+  background:#eaf4ff;
+  border-color:#9fc8f4;
+  color:#0f73e6;
+}
+.timeline-observed-axis{
+  display:grid;
+  grid-template-columns:150px minmax(0,1fr);
+  min-height:38px;
+  border-bottom:1px solid #e5ecf3;
+  background:#fbfdff;
+}
+.timeline-observed-axis-spacer{
+  display:flex;
+  flex-direction:column;
+  justify-content:center;
+  gap:1px;
+  padding:5px 8px;
+  border-right:1px solid #e2e9f1;
+}
+.timeline-observed-axis-spacer strong{
+  font-size:8px;
+  color:#536b85;
+  text-transform:uppercase;
+  letter-spacing:.05em;
+}
+.timeline-observed-axis-spacer small{
+  font-size:8px;
+  color:#8b9bad;
+  font-variant-numeric:tabular-nums;
+}
+.timeline-observed-axis-scale{
+  position:relative;
+  min-width:0;
+  background:repeating-linear-gradient(90deg,#fff 0 49px,#f2f6fa 50px);
+}
+.timeline-observed-axis-scale::after{
+  content:"";
+  position:absolute;
+  left:0;
+  right:0;
+  bottom:6px;
+  border-top:1px solid #afc1d4;
+}
+.timeline-observed-axis-scale span{
+  position:absolute;
+  top:6px;
+  transform:translateX(-50%);
+  font-size:8px;
+  color:#647b94;
+  font-variant-numeric:tabular-nums;
+  white-space:nowrap;
+}
+.timeline-observed-axis-scale span:first-child{transform:none}
+.timeline-observed-axis-scale span:last-child{transform:translateX(-100%)}
+.timeline-observed-lane::after{
+  content:"";
+  position:absolute;
+  inset:0;
+  pointer-events:none;
+  background:repeating-linear-gradient(90deg,transparent 0 calc(10% - 1px),#edf2f7 calc(10% - 1px) 10%);
+  opacity:.75;
+}
+.timeline-observed-clip{z-index:1}
+
+@media(max-width:850px){
+  .timeline-observed-preview-head{align-items:flex-start;flex-direction:column}
+  .timeline-observed-axis{grid-template-columns:110px minmax(0,1fr)}
+}
