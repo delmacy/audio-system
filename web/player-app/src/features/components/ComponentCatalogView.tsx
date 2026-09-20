@@ -9,6 +9,7 @@ import { PlayerInline, PlayerMini } from '@/representations/player'
 import { ModeSwitch } from '@/features/simulator/elements/ModeSwitch'
 import { SummaryCard } from '@/features/simulator/elements/SummaryCard'
 import { PrimitiveCatalogSection } from '@/features/components/PrimitiveCatalogSection'
+import { BlockPrimitiveCatalogSection } from '@/features/components/BlockPrimitiveCatalogSection'
 import { ShadcnCatalogSection } from '@/features/components/ShadcnCatalogSection'
 import { SIM_CWPS, type SimStatus, type SimulatorMode } from '@/features/simulator/model'
 
@@ -154,10 +155,7 @@ export function ComponentCatalogView({ mode, status, events }: {
 
       {catalogTab === 'shadcn' && <ShadcnCatalogSection number="08" />}
 
-      {catalogTab === 'blocks' && <section className="catalog-section">
-        <div className="catalog-section-title"><div><span>09</span><h2>Blocos compostos</h2></div><p>Reservado para composições futuras.</p></div>
-        <div className="catalog-empty-state">Nenhum bloco composto catalogado ainda.</div>
-      </section>}
+      {catalogTab === 'blocks' && <BlockPrimitiveCatalogSection number="09" />}
 
       {catalogTab === 'elements' && <section className="catalog-section">
         <div className="catalog-section-title"><div><span>11</span><h2>Elementos genéricos</h2></div><p>Peças não vinculadas a uma entidade específica.</p></div>
