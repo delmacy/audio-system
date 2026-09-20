@@ -40,9 +40,6 @@ export function TimelineRulerZoom({
   }, [safeDuration, zoom])
 
   const safeStart = clamp(viewportStart, 0, Math.max(0, safeDuration - visibleDuration))
-  if (safeStart !== viewportStart) {
-    queueMicrotask(() => setViewportStart(safeStart))
-  }
 
   const majorStep = chooseMajorStep(visibleDuration)
   const minorStep = majorStep / 5

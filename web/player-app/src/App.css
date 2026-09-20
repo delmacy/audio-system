@@ -682,3 +682,27 @@ button:focus-visible,input:focus-visible,select:focus-visible,[role=slider]:focu
 .timeline-primitive-zoom input{flex:1;accent-color:#1677ec}
 
 @media(max-width:1000px){.timeline-catalog-grid{grid-template-columns:1fr}}
+
+
+/* Functional timeline ruler + zoom */
+.timeline-catalog-grid.single{grid-template-columns:1fr}
+.timeline-ruler-zoom{width:100%;display:flex;flex-direction:column;border:1px solid #d5e0eb;border-radius:9px;background:#fff;overflow:hidden}
+.timeline-ruler-zoom-toolbar{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:9px 10px;border-bottom:1px solid #e0e8f1;background:#f8fbff}
+.timeline-ruler-window-label{display:flex;align-items:center;gap:6px;min-width:0;color:#415774;font-size:11px;font-variant-numeric:tabular-nums}
+.timeline-ruler-window-label strong{color:#263d5c}
+.timeline-ruler-window-label small{margin-left:6px;color:#7b8da3;white-space:nowrap}
+.timeline-ruler-zoom-controls{display:flex;align-items:center;gap:7px;min-width:310px}
+.timeline-ruler-zoom-controls button{height:30px;display:inline-flex;align-items:center;justify-content:center;gap:5px;border:1px solid #d3dfeb;background:#fff;color:#405873;border-radius:7px;padding:0 8px;font-size:11px;font-weight:700}
+.timeline-ruler-zoom-controls button:hover{background:#eef6ff;border-color:#9fc8f4;color:#0f73e6}
+.timeline-ruler-zoom-controls input{min-width:120px;flex:1;accent-color:#1677ec}
+.timeline-ruler-zoom-controls>span{min-width:34px;text-align:right;font-size:10px;color:#70839a;font-variant-numeric:tabular-nums}
+.timeline-ruler-zoom-axis{position:relative;height:62px;background:linear-gradient(#fff,#fbfdff);overflow:hidden}
+.timeline-ruler-zoom-axis i{position:absolute;bottom:0;width:1px;background:#9fb2c8;transform:translateX(-.5px)}
+.timeline-ruler-zoom-axis i.minor{height:9px;opacity:.75}
+.timeline-ruler-zoom-axis i.major{height:19px;background:#6f86a3}
+.timeline-ruler-zoom-axis i.major span{position:absolute;left:4px;bottom:24px;font-size:10px;color:#465f7d;white-space:nowrap;font-style:normal;font-variant-numeric:tabular-nums}
+@media(max-width:850px){
+  .timeline-ruler-zoom-toolbar{align-items:flex-start;flex-direction:column}
+  .timeline-ruler-zoom-controls{width:100%;min-width:0}
+  .timeline-ruler-window-label small{display:none}
+}
