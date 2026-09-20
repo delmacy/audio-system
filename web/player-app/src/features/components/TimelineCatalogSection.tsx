@@ -9,6 +9,7 @@ import {
 } from '@/features/timeline/TimelinePrimitives'
 import { TimelineRulerZoom } from '@/features/timeline/TimelineRulerZoom'
 import { TimelineDataLab } from '@/features/timeline/TimelineDataLab'
+import { RecordedTrackLab } from '@/features/timeline/RecordedTrackLab'
 
 function Specimen({ id, children }: { id: string; children: React.ReactNode }) {
   return <article className="primitive-specimen timeline-specimen" id={id}>
@@ -25,6 +26,11 @@ export function TimelineCatalogSection({ number }: { number: string }) {
     </div>
 
     <div className="timeline-catalog-stack">
+      <section className="primitive-family">
+        <header><strong>recorded tracks</strong><small>material persistido por trilha + checkbox de futura escuta</small></header>
+        <RecordedTrackLab />
+      </section>
+
       <section className="primitive-family">
         <header><strong>data lab</strong><small>fixture/real + recebimento + DTO + contagem renderizável</small></header>
         <TimelineDataLab />
