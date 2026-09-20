@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Activity, ClipboardList, Database, Radio } from 'lucide-react'
-import { CwpFull, CwpListItem, CwpSummary, CwpThumb } from '@/representations/cwp'
+import { CwpFull, CwpListItem, CwpSummary, CwpThumb, CwpThumbEdit } from '@/representations/cwp'
 import { RadioSummary } from '@/representations/radio'
 import { TelephoneSummary } from '@/representations/telephone'
 import { RecorderFull, RecorderStatus, RecorderSummary } from '@/representations/recorder'
@@ -24,6 +24,7 @@ export function ComponentCatalogView({ mode, status, events }: {
   const cwpFull = { ...sample, label: 'CWP_full' }
   const cwpSummary = { ...sample, label: 'CWP_summary' }
   const cwpThumb = { ...sample, label: 'CWP_thumb' }
+  const cwpThumbEdit = { ...sample, label: 'CWP_thumb_edit' }
   const cwpListItem = { ...sample, label: 'CWP_list_item' }
   const radioSummary = { ...sampleRadio, label: 'RADIO_summary' }
   const telephoneSummary = { ...sampleTel, label: 'TELEPHONE_summary' }
@@ -43,7 +44,10 @@ export function ComponentCatalogView({ mode, status, events }: {
         <div className="catalog-section-title"><div><span>01</span><h2>CWP · múltiplas representações</h2></div><p>Uma entidade, várias densidades visuais.</p></div>
         <div className="rep-showcase-stack">
           <CwpSummary cwp={cwpSummary} mode={previewMode} />
-          <div className="rep-thumb-row"><CwpThumb cwp={cwpThumb} mode={previewMode} /></div>
+          <div className="rep-thumb-row">
+            <CwpThumb cwp={cwpThumb} mode={previewMode} />
+            <CwpThumbEdit cwp={cwpThumbEdit} mode={previewMode} />
+          </div>
           <CwpListItem cwp={cwpListItem} mode={previewMode} />
           <div className="catalog-isolated medium">
             <CwpFull cwp={cwpFull} mode={previewMode} expanded={expanded.includes(sample.id)}

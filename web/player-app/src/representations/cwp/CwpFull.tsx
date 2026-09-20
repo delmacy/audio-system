@@ -3,20 +3,25 @@ import { RadioPillList } from '@/representations/radio/RadioPillList'
 import { TelephonePillList } from '@/representations/telephone/TelephonePillList'
 import type { CwpConfig, SimulatorMode } from '@/features/simulator/model'
 
-export function CwpFull({ cwp, mode, expanded, onToggle }: {
+export function CwpFull({ cwp, mode, expanded, onToggle, collapsible = true, showConfigActions = true }: {
   cwp: CwpConfig
   mode: SimulatorMode
   expanded: boolean
-  onToggle: () => void
+  onToggle?: () => void
+  collapsible?: boolean
+  showConfigActions?: boolean
 }) {
   const config = cwp[mode]
+  const header = <>
+    <span className="cwp-icon"><Monitor size={24} /></span>
+    <span className="cwp-head"><strong>{cwp.label}</strong><small><i className="status-dot" />Online</small></span>
+    {collapsible && <ChevronRight size={20} className={expanded ? 'open' : ''} />}
+  </>
 
   return <article className={'cwp-card' + (expanded ? ' expanded' : '')}>
-    <button type="button" className="cwp-main" onClick={onToggle} aria-expanded={expanded}>
-      <span className="cwp-icon"><Monitor size={24} /></span>
-      <span className="cwp-head"><strong>{cwp.label}</strong><small><i className="status-dot" />Online</small></span>
-      <ChevronRight size={20} className={expanded ? 'open' : ''} />
-    </button>
+    {collapsible
+      ? <button type="button" className="cwp-main" onClick={onToggle} aria-expanded={expanded}>{header}</button>
+      : <div className="cwp-main cwp-main-static">{header}</div>}
 
     <div className="cwp-meta">
       <span>IP: {config.consoleIp}</span>
@@ -37,10 +42,10 @@ export function CwpFull({ cwp, mode, expanded, onToggle }: {
         <label>Perfil<input value={mode === 'capture' ? 'Captura Real' : 'Simulação de Teste'} readOnly /></label>
       </div>
       <label className="config-note">Observações<textarea value={config.notes} readOnly /></label>
-      <div className="config-actions">
+      {showConfigActions && <div className="config-actions">
         <button type="button"><Wrench size={16} />Editar configuração</button>
         <button type="button"><FileText size={16} />Ver serviços</button>
-      </div>
+      </div>}
     </div>}
   </article>
 }

@@ -1,4 +1,5 @@
 export { CwpFull } from './CwpFull'
 export { CwpSummary } from './CwpSummary'
 export { CwpThumb } from './CwpThumb'
+export { CwpThumbEdit, type CwpThumbEditDraft } from './CwpThumbEdit'
 export { CwpListItem } from './CwpListItem'
