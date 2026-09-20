@@ -539,3 +539,97 @@ button:focus-visible,input:focus-visible,select:focus-visible,[role=slider]:focu
   .primitive-block-motion-pulse,
   .primitive-block-motion-fill-pulse{animation:none}
 }
+
+
+/* Catalog-only application shell */
+.component-catalog-main{
+  grid-column:1/-1;
+  grid-row:1/-1;
+  min-height:100vh;
+}
+
+/* Form primitives */
+.form-primitive-grid{display:grid;grid-template-columns:repeat(2,minmax(260px,1fr));gap:12px}
+.form-specimen .primitive-specimen-preview{width:100%}
+
+.form-primitive-field{
+  --form-solid:#1677ec;
+  --form-soft:#eef6ff;
+  --form-border:#bcd6f3;
+  --form-text:#233b5a;
+  width:100%;
+  display:flex;
+  flex-direction:column;
+  gap:6px;
+  color:var(--form-text);
+}
+.form-primitive-field>span{
+  font-size:11px;
+  font-weight:720;
+  color:#52677f;
+}
+.form-primitive-field>small{
+  font-size:10px;
+  color:#7a8da3;
+}
+.form-primitive-field input,
+.form-primitive-field textarea{
+  width:100%;
+  border:1px solid var(--form-border);
+  border-radius:8px;
+  background:#fff;
+  color:var(--form-text);
+  padding:9px 10px;
+  font-size:12px;
+  transition:border-color .15s ease,box-shadow .15s ease,background .15s ease;
+}
+.form-primitive-field textarea{
+  resize:vertical;
+  min-height:84px;
+}
+.form-primitive-field input:hover,
+.form-primitive-field textarea:hover{
+  border-color:var(--form-solid);
+}
+.form-primitive-field input:focus,
+.form-primitive-field textarea:focus{
+  outline:none;
+  border-color:var(--form-solid);
+  box-shadow:0 0 0 3px color-mix(in srgb,var(--form-solid) 15%,transparent);
+}
+.form-primitive-field input::placeholder,
+.form-primitive-field textarea::placeholder{
+  color:#9aa8b8;
+}
+
+.form-primitive-blue{--form-solid:#1677ec;--form-soft:#eef6ff;--form-border:#bcd6f3}
+.form-primitive-gray{--form-solid:#7d8a9a;--form-soft:#f1f4f7;--form-border:#d0d9e3}
+.form-primitive-red{--form-solid:#d94343;--form-soft:#fff0f0;--form-border:#efbbbb}
+.form-primitive-green{--form-solid:#18a35b;--form-soft:#eaf8f0;--form-border:#bfe4cf}
+.form-primitive-purple{--form-solid:#7c5ce0;--form-soft:#f2efff;--form-border:#d7cdf8}
+
+.form-primitive-motion-pulse input,
+.form-primitive-motion-pulse textarea{
+  animation:formPrimitivePulse 1.7s ease-in-out infinite;
+}
+@keyframes formPrimitivePulse{
+  0%,100%{box-shadow:0 0 0 0 color-mix(in srgb,var(--form-solid) 0%,transparent)}
+  50%{box-shadow:0 0 0 5px color-mix(in srgb,var(--form-solid) 13%,transparent)}
+}
+
+.form-primitive-disabled input,
+.form-primitive-disabled textarea{
+  background:#eef1f4;
+  border-color:#d8dee6;
+  color:#8894a2;
+  cursor:not-allowed;
+  opacity:.9;
+}
+.form-primitive-disabled>span,
+.form-primitive-disabled>small{color:#8a96a4}
+
+@media(prefers-reduced-motion:reduce){
+  .form-primitive-motion-pulse input,
+  .form-primitive-motion-pulse textarea{animation:none}
+}
+@media(max-width:900px){.form-primitive-grid{grid-template-columns:1fr}}
