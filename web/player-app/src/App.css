@@ -864,3 +864,190 @@ button:focus-visible,input:focus-visible,select:focus-visible,[role=slider]:focu
   .timeline-data-lab-header{align-items:flex-start;flex-direction:column}
   .timeline-data-lab-metrics{grid-template-columns:repeat(2,minmax(100px,1fr))}
 }
+
+
+/* Timeline real-data lab */
+.timeline-data-lab{
+  display:flex;
+  flex-direction:column;
+  gap:12px;
+  border:1px solid #dce5ef;
+  border-radius:12px;
+  background:#fbfdff;
+  padding:14px;
+}
+.timeline-data-lab-header{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+}
+.timeline-data-lab-header>div:first-child{display:flex;flex-direction:column;gap:3px}
+.timeline-data-lab-header strong{font-size:13px;color:#203955}
+.timeline-data-lab-header small{font-size:10px;color:#74879e}
+.timeline-data-source-switch{display:flex;gap:6px;flex-wrap:wrap}
+.timeline-data-source-switch button{
+  height:30px;
+  border:1px solid #d4e0ed;
+  background:#fff;
+  color:#4b607a;
+  border-radius:7px;
+  padding:0 10px;
+  font-size:11px;
+  font-weight:700;
+}
+.timeline-data-source-switch button.active{
+  background:#eaf4ff;
+  border-color:#9fc8f4;
+  color:#0f73e6;
+}
+.timeline-data-source-switch button:disabled{opacity:.45;cursor:not-allowed}
+
+.data-source-status{
+  --data-state:#1677ec;
+  display:flex;
+  align-items:center;
+  gap:9px;
+  min-height:44px;
+  padding:8px 10px;
+  border:1px solid color-mix(in srgb,var(--data-state) 26%,#d9e3ef);
+  border-radius:8px;
+  background:color-mix(in srgb,var(--data-state) 6%,#fff);
+}
+.data-source-status-connected{--data-state:#18a35b}
+.data-source-status-loading{--data-state:#7c5ce0}
+.data-source-status-empty{--data-state:#7d8a9a}
+.data-source-status-stale{--data-state:#e5a318}
+.data-source-status-error{--data-state:#d94343}
+.data-source-status-dot{
+  width:9px;height:9px;border-radius:50%;background:var(--data-state);flex:none;
+  box-shadow:0 0 0 3px color-mix(in srgb,var(--data-state) 13%,transparent);
+}
+.data-source-status-loading .data-source-status-dot{animation:dataSourcePulse 1.2s ease-in-out infinite}
+@keyframes dataSourcePulse{0%,100%{opacity:.45}50%{opacity:1}}
+.data-source-status>div{display:flex;flex-direction:column;gap:2px;min-width:0}
+.data-source-status strong{font-size:11px;color:#28415f;overflow:hidden;text-overflow:ellipsis}
+.data-source-status small{font-size:10px;color:#71849a}
+.data-source-status time{margin-left:auto;font-size:10px;color:#71849a;font-variant-numeric:tabular-nums}
+
+.data-probe{
+  display:grid;
+  grid-template-columns:auto auto auto auto auto 1fr;
+  align-items:center;
+  gap:9px;
+  padding:10px;
+  border:1px solid #e1e9f2;
+  border-radius:8px;
+  background:#fff;
+}
+.data-probe>div{display:flex;align-items:baseline;gap:6px}
+.data-probe span{font-size:9px;color:#788ba1;text-transform:uppercase;letter-spacing:.06em}
+.data-probe strong{font-size:14px;color:#263d5c;font-variant-numeric:tabular-nums}
+.data-probe>i{font-style:normal;color:#9aacbf}
+.data-probe-discarded{justify-self:end}
+.data-probe-discarded.has-discarded strong{color:#d94343}
+
+.timeline-data-lab-metrics{
+  display:grid;
+  grid-template-columns:repeat(4,minmax(0,1fr));
+  gap:8px;
+}
+.timeline-data-lab-metrics>div{
+  display:flex;
+  flex-direction:column;
+  gap:2px;
+  border:1px solid #e2e9f1;
+  border-radius:8px;
+  background:#fff;
+  padding:8px 9px;
+}
+.timeline-data-lab-metrics span{font-size:9px;color:#7a8da3;text-transform:uppercase}
+.timeline-data-lab-metrics strong{font-size:12px;color:#2d4563;overflow:hidden;text-overflow:ellipsis}
+
+.timeline-observed-preview{
+  border:1px solid #dce5ef;
+  border-radius:9px;
+  background:#fff;
+  overflow:hidden;
+}
+.timeline-observed-preview-head{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+  padding:8px 10px;
+  border-bottom:1px solid #e3eaf2;
+  background:#f7faff;
+}
+.timeline-observed-preview-head strong{font-size:11px;color:#29415f}
+.timeline-observed-preview-head span{font-size:10px;color:#75879e}
+.timeline-observed-tracks{display:flex;flex-direction:column}
+.timeline-observed-track{
+  display:grid;
+  grid-template-columns:150px minmax(0,1fr);
+  min-height:38px;
+  border-top:1px solid #edf2f7;
+}
+.timeline-observed-track:first-child{border-top:0}
+.timeline-observed-label{
+  min-width:0;
+  display:flex;
+  flex-direction:column;
+  justify-content:center;
+  gap:1px;
+  padding:5px 8px;
+  border-right:1px solid #e2e9f1;
+  background:#f8fbff;
+}
+.timeline-observed-label small,
+.timeline-observed-label strong{
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+.timeline-observed-label small{font-size:8px;color:#8293a7}
+.timeline-observed-label strong{font-size:10px;color:#304761}
+.timeline-observed-lane{
+  position:relative;
+  min-width:0;
+  background:repeating-linear-gradient(90deg,#fff 0 49px,#f2f6fa 50px);
+}
+.timeline-observed-clip{
+  position:absolute;
+  top:8px;
+  height:21px;
+  min-width:2px;
+  border-radius:4px;
+}
+.timeline-observed-clip.indexed{background:#dcecff;border:1px solid #7eb5f3}
+.timeline-observed-clip.audit{background:#fff1ce;border:1px solid #e1b445}
+.timeline-observed-empty{padding:18px;text-align:center;font-size:11px;color:#778aa0}
+
+.timeline-data-raw{
+  border-top:1px solid #e2e9f1;
+  padding-top:8px;
+}
+.timeline-data-raw summary{cursor:pointer;font-size:10px;font-weight:700;color:#546a84}
+.timeline-data-raw pre{
+  max-height:260px;
+  overflow:auto;
+  margin:8px 0 0;
+  padding:10px;
+  border:1px solid #e0e8f1;
+  border-radius:7px;
+  background:#101722;
+  color:#d7e4ef;
+  font-size:9px;
+  line-height:1.45;
+}
+
+@media(max-width:850px){
+  .timeline-data-lab-header{align-items:flex-start;flex-direction:column}
+  .timeline-data-lab-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .data-probe{grid-template-columns:auto auto auto auto auto;overflow-x:auto}
+  .data-probe-discarded{justify-self:start}
+  .timeline-observed-track{grid-template-columns:110px minmax(0,1fr)}
+}
+@media(prefers-reduced-motion:reduce){
+  .data-source-status-loading .data-source-status-dot{animation:none}
+}
