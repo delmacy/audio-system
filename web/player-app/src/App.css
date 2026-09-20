@@ -157,3 +157,8 @@ button:focus-visible,input:focus-visible,select:focus-visible,[role=slider]:focu
 .rep-sip-edit-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.rep-sip-edit-grid label{display:flex;flex-direction:column;gap:5px;font-size:11px;color:#63758c;font-weight:650}.rep-sip-edit-grid input,.rep-sip-edit-grid select{width:100%;border:1px solid #cfdae7;border-radius:7px;background:#fff;padding:9px;color:#223c5d;font-size:12px}
 .topology-core-stack{display:flex;flex-direction:column;align-items:stretch;gap:10px}
 @media(max-width:800px){.rep-sip-summary{grid-template-columns:auto 1fr}.rep-sip-summary span,.rep-sip-summary small{display:none}.rep-sip-full dl,.rep-sip-edit-grid{grid-template-columns:1fr}}
+
+
+/* Component catalog simulation action bar preview */
+.catalog-action-bar-preview{border:1px dashed #c9d8e8;border-radius:12px;background:#f8fbff;padding:14px;overflow:auto}
+.catalog-action-bar-preview .sim-action-bar{position:static;bottom:auto;border:1px solid #d7e2ef;border-radius:10px;box-shadow:none;padding:12px;background:#fff;min-width:max-content}
