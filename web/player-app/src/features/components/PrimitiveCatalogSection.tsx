@@ -8,9 +8,13 @@ import {
   SectionHeader,
   StatusDot,
   Tag,
+  PrimitiveButton,
   primitiveId,
   type PrimitiveColor,
   type PrimitiveMotion,
+  type PrimitiveButtonColor,
+  type PrimitiveButtonVariant,
+  type PrimitiveButtonSize,
 } from '@/primitives'
 
 type PrimitiveSpec = {
@@ -49,6 +53,39 @@ const SPECS: PrimitiveSpec[] = [
   },
 ]
 
+const BUTTON_COLORS: PrimitiveButtonColor[] = ['blue', 'gray', 'red', 'green']
+const BUTTON_VARIANTS: PrimitiveButtonVariant[] = ['solid', 'outline', 'ghost']
+const BUTTON_SIZES: PrimitiveButtonSize[] = ['sm', 'md', 'lg']
+
+function ButtonPrimitiveCatalog() {
+  return <section className="primitive-family">
+    <header><strong>button</strong><small>blue · gray · red · green × solid · outline · ghost × sm · md · lg + disabled + icon</small></header>
+    <div className="primitive-button-grid">
+      {BUTTON_COLORS.flatMap(color => BUTTON_VARIANTS.flatMap(variant => BUTTON_SIZES.map(size => {
+        const id = `button_${color}_${variant}_${size}`
+        return <article className="primitive-specimen" key={id} id={id}>
+          <div className="primitive-specimen-preview"><PrimitiveButton color={color} variant={variant} size={size}>{id}</PrimitiveButton></div>
+          <code>{id}</code>
+        </article>
+      })))}
+      {BUTTON_COLORS.flatMap(color => {
+        const disabledId = `button_${color}_solid_disabled`
+        const iconId = `button_${color}_ghost_icon`
+        return [
+          <article className="primitive-specimen" key={disabledId} id={disabledId}>
+            <div className="primitive-specimen-preview"><PrimitiveButton color={color} variant="solid" disabled>{disabledId}</PrimitiveButton></div>
+            <code>{disabledId}</code>
+          </article>,
+          <article className="primitive-specimen" key={iconId} id={iconId}>
+            <div className="primitive-specimen-preview"><PrimitiveButton color={color} variant="ghost" iconOnly ariaLabel={iconId} /></div>
+            <code>{iconId}</code>
+          </article>
+        ]
+      })}
+    </div>
+  </section>
+}
+
 export function PrimitiveCatalogSection({ number }: { number: string }) {
   return <section className="catalog-section">
     <div className="catalog-section-title">
@@ -57,6 +94,7 @@ export function PrimitiveCatalogSection({ number }: { number: string }) {
     </div>
 
     <div className="primitive-catalog-stack">
+      <ButtonPrimitiveCatalog />
       {SPECS.map(spec => <section className="primitive-family" key={spec.prefix}>
         <header><strong>{spec.prefix}</strong><small>green · yellow · red · gray × static · pulse · blink · ping</small></header>
         <div className="primitive-variant-grid">
