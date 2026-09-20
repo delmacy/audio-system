@@ -34,7 +34,7 @@ export function TimelineCatalogSection({ number }: { number: string }) {
       <section className="primitive-family">
         <header><strong>ruler + zoom</strong><small>componente funcional com escala temporal dinâmica</small></header>
         <div className="timeline-catalog-grid single">
-          <Specimen id="timeline_ruler_zoom"><TimelineRulerZoom durationSeconds={7200} /></Specimen>
+          <Specimen id="timeline_ruler_zoom"><TimelineRulerZoom durationSeconds={8 * 60 * 60} /></Specimen>
         </div>
       </section>
 

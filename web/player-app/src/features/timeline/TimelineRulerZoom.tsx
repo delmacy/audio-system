@@ -1,7 +1,19 @@
 import { useMemo, useState } from 'react'
 import { Maximize2, Minus, Plus } from 'lucide-react'
 
-const NICE_STEPS = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600]
+const ZOOM_LEVELS = [
+  { visibleSeconds: 5 * 60 * 60, majorStep: 60 * 60, label: '5h / blocos 1h' },
+  { visibleSeconds: 150 * 60, majorStep: 30 * 60, label: '2h30 / blocos 30min' },
+  { visibleSeconds: 75 * 60, majorStep: 15 * 60, label: '1h15 / blocos 15min' },
+  { visibleSeconds: 50 * 60, majorStep: 10 * 60, label: '50min / blocos 10min' },
+  { visibleSeconds: 25 * 60, majorStep: 5 * 60, label: '25min / blocos 5min' },
+  { visibleSeconds: 10 * 60, majorStep: 2 * 60, label: '10min / blocos 2min' },
+  { visibleSeconds: 5 * 60, majorStep: 60, label: '5min / blocos 1min' },
+  { visibleSeconds: 150, majorStep: 30, label: '2m30 / blocos 30s' },
+  { visibleSeconds: 75, majorStep: 15, label: '1m15 / blocos 15s' },
+  { visibleSeconds: 50, majorStep: 10, label: '50s / blocos 10s' },
+  { visibleSeconds: 25, majorStep: 5, label: '25s / blocos 5s' },
+] as const
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value))
@@ -17,56 +29,52 @@ function formatTime(totalSeconds: number) {
     : `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
 }
 
-function chooseMajorStep(visibleDuration: number) {
-  const target = visibleDuration / 6
-  return NICE_STEPS.find(step => step >= target) ?? NICE_STEPS[NICE_STEPS.length - 1]
-}
-
 export function TimelineRulerZoom({
-  durationSeconds = 3600,
+  durationSeconds = 8 * 60 * 60,
   initialStartSeconds = 0,
 }: {
   durationSeconds?: number
   initialStartSeconds?: number
 }) {
   const safeDuration = Math.max(1, durationSeconds)
-  const [zoom, setZoom] = useState(0)
+  const [zoomLevel, setZoomLevel] = useState(0)
   const [viewportStart, setViewportStart] = useState(clamp(initialStartSeconds, 0, safeDuration - 1))
 
-  const visibleDuration = useMemo(() => {
-    const minVisible = Math.min(10, safeDuration)
-    const ratio = Math.pow(1 - zoom / 100, 2)
-    return clamp(minVisible + (safeDuration - minVisible) * ratio, minVisible, safeDuration)
-  }, [safeDuration, zoom])
+  const level = ZOOM_LEVELS[zoomLevel]
+  const visibleDuration = Math.min(level.visibleSeconds, safeDuration)
+  const majorStep = Math.min(level.majorStep, visibleDuration)
+  const minorStep = majorStep / 5
 
   const safeStart = clamp(viewportStart, 0, Math.max(0, safeDuration - visibleDuration))
-
-  const majorStep = chooseMajorStep(visibleDuration)
-  const minorStep = majorStep / 5
   const end = safeStart + visibleDuration
 
   const ticks = useMemo(() => {
     const first = Math.ceil(safeStart / minorStep) * minorStep
     const items: { time: number; major: boolean }[] = []
     for (let t = first; t <= end + 0.0001; t += minorStep) {
-      items.push({ time: t, major: Math.abs((t / majorStep) - Math.round(t / majorStep)) < 0.001 })
-      if (items.length > 150) break
+      items.push({
+        time: t,
+        major: Math.abs((t / majorStep) - Math.round(t / majorStep)) < 0.001,
+      })
+      if (items.length > 180) break
     }
     return items
   }, [safeStart, end, minorStep, majorStep])
 
-  const setZoomKeepingCenter = (nextZoom: number) => {
+  const setLevelKeepingCenter = (nextLevel: number) => {
     const center = safeStart + visibleDuration / 2
-    const z = clamp(nextZoom, 0, 100)
-    const minVisible = Math.min(10, safeDuration)
-    const ratio = Math.pow(1 - z / 100, 2)
-    const nextVisible = clamp(minVisible + (safeDuration - minVisible) * ratio, minVisible, safeDuration)
-    setZoom(z)
-    setViewportStart(clamp(center - nextVisible / 2, 0, Math.max(0, safeDuration - nextVisible)))
+    const next = clamp(nextLevel, 0, ZOOM_LEVELS.length - 1)
+    const nextVisible = Math.min(ZOOM_LEVELS[next].visibleSeconds, safeDuration)
+    setZoomLevel(next)
+    setViewportStart(clamp(
+      center - nextVisible / 2,
+      0,
+      Math.max(0, safeDuration - nextVisible),
+    ))
   }
 
-  const fit = () => {
-    setZoom(0)
+  const fitFiveHours = () => {
+    setZoomLevel(0)
     setViewportStart(0)
   }
 
@@ -76,22 +84,39 @@ export function TimelineRulerZoom({
         <strong>{formatTime(safeStart)}</strong>
         <span>→</span>
         <strong>{formatTime(end)}</strong>
-        <small>{formatTime(visibleDuration)} visíveis</small>
+        <small>{formatTime(visibleDuration)} visíveis · {level.label}</small>
       </div>
 
       <div className="timeline-ruler-zoom-controls">
-        <button type="button" onClick={() => setZoomKeepingCenter(zoom - 10)} aria-label="Diminuir zoom"><Minus size={15}/></button>
+        <button
+          type="button"
+          onClick={() => setLevelKeepingCenter(zoomLevel - 1)}
+          disabled={zoomLevel === 0}
+          aria-label="Diminuir zoom"
+        ><Minus size={15}/></button>
+
         <input
           type="range"
           min="0"
-          max="100"
-          value={zoom}
-          onChange={event => setZoomKeepingCenter(Number(event.target.value))}
+          max={ZOOM_LEVELS.length - 1}
+          step="1"
+          value={zoomLevel}
+          onChange={event => setLevelKeepingCenter(Number(event.target.value))}
           aria-label="Zoom da timeline"
         />
-        <span>{zoom}%</span>
-        <button type="button" onClick={() => setZoomKeepingCenter(zoom + 10)} aria-label="Aumentar zoom"><Plus size={15}/></button>
-        <button type="button" onClick={fit} aria-label="Exibir toda a timeline"><Maximize2 size={15}/>Fit</button>
+
+        <span>{zoomLevel + 1}/{ZOOM_LEVELS.length}</span>
+
+        <button
+          type="button"
+          onClick={() => setLevelKeepingCenter(zoomLevel + 1)}
+          disabled={zoomLevel === ZOOM_LEVELS.length - 1}
+          aria-label="Aumentar zoom"
+        ><Plus size={15}/></button>
+
+        <button type="button" onClick={fitFiveHours} aria-label="Voltar para janela de cinco horas">
+          <Maximize2 size={15}/>5h
+        </button>
       </div>
     </div>
 
