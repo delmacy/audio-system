@@ -325,3 +325,20 @@ button:focus-visible,input:focus-visible,select:focus-visible,[role=slider]:focu
 @media(max-width:1100px){
   .catalog-primary-tabs{top:122px;padding-left:18px;padding-right:18px}
 }
+
+
+/* Purple primitive color */
+.primitive-color-purple{--primitive-solid:#7c5ce0;--primitive-fg:#5f43b9;--primitive-bg:#f2efff;--primitive-border:#d8cff8}
+.primitive-button-purple{--button-solid:#7c5ce0;--button-solid-hover:#6849cc;--button-fg:#6448bd;--button-soft:#f2efff;--button-border:#d7cdf8}
+
+/* shadcn/UI catalog */
+.shadcn-catalog-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.shadcn-specimen{min-width:0;border:1px solid #dce5ef;border-radius:11px;background:#fbfdff;padding:14px;display:flex;flex-direction:column;gap:14px}
+.shadcn-specimen>header{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.shadcn-specimen>header strong{font-size:13px;color:#203955;font-family:ui-monospace,SFMono-Regular,Consolas,monospace}
+.shadcn-specimen>header code{font-size:10px;color:#60748e;background:#f1f5f9;border-radius:5px;padding:4px 6px}
+.shadcn-preview-row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.shadcn-inline-control{display:flex;align-items:center;gap:8px;color:#42556d;font-size:12px}
+.shadcn-collapsible-content{margin-top:8px;border:1px solid #e0e8f1;border-radius:8px;background:#fff;padding:10px;color:#60748e;font-size:12px}
+.shadcn-slider-demo{display:grid;grid-template-columns:minmax(160px,1fr) auto;gap:12px;align-items:center}.shadcn-slider-demo strong{font-size:12px;color:#42556d}
+@media(max-width:1000px){.shadcn-catalog-grid{grid-template-columns:1fr}}
