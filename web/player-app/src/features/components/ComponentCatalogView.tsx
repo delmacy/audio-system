@@ -11,6 +11,7 @@ import { SimulatorActionBarBlock } from '@/features/simulator/blocks/SimulatorAc
 import { SideBlock } from '@/features/simulator/blocks/SideBlock'
 import { ModeSwitch } from '@/features/simulator/elements/ModeSwitch'
 import { SummaryCard } from '@/features/simulator/elements/SummaryCard'
+import { PrimitiveCatalogSection } from '@/features/components/PrimitiveCatalogSection'
 import { SIM_CWPS, type SimStatus, type SimulatorMode } from '@/features/simulator/model'
 
 export function ComponentCatalogView({ mode, status, events }: {
@@ -139,8 +140,10 @@ export function ComponentCatalogView({ mode, status, events }: {
         <div className="catalog-isolated events-preview"><EventsBlock events={events.slice(0, 6)} /></div>
       </section>
 
+      <PrimitiveCatalogSection number="08" />
+
       <section className="catalog-section">
-        <div className="catalog-section-title"><div><span>08</span><h2>Elementos genéricos</h2></div><p>Peças não vinculadas a uma entidade específica.</p></div>
+        <div className="catalog-section-title"><div><span>09</span><h2>Elementos genéricos</h2></div><p>Peças não vinculadas a uma entidade específica.</p></div>
         <div className="catalog-summary-grid">
           <SummaryCard icon={ClipboardList} title="CWP's" value="4" detail="ativos de 4" />
           <SummaryCard icon={Radio} title="Rádios" value="8" detail="ativos de 8" tone="green" />
