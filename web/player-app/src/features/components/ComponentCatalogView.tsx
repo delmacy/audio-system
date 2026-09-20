@@ -5,7 +5,7 @@ import { RadioFull, RadioSummary, RadioThumb, RadioThumbEdit } from '@/represent
 import { TelephoneFull, TelephoneSummary, TelephoneThumb, TelephoneThumbEdit } from '@/representations/telephone'
 import { RecorderFull, RecorderStatus, RecorderSummary, RecorderThumb, RecorderThumbEdit } from '@/representations/recorder'
 import { SipFull, SipStatus, SipSummary, SipThumb, SipThumbEdit } from '@/representations/sip'
-import { PlayerInline, PlayerMini } from '@/representations/player'
+import { PlayerInline, PlayerMini, PlayerTrackRow, PlayerTrackSelection, PlayerTransport } from '@/representations/player'
 import { ModeSwitch } from '@/features/simulator/elements/ModeSwitch'
 import { SummaryCard } from '@/features/simulator/elements/SummaryCard'
 import { PrimitiveCatalogSection } from '@/features/components/PrimitiveCatalogSection'
@@ -148,10 +148,62 @@ export function ComponentCatalogView({ mode, status, events }: {
       </section>}
 
       {catalogTab === 'player' && <section className="catalog-section">
-        <div className="catalog-section-title"><div><span>06</span><h2>Player</h2></div><p>Representações compactas reutilizáveis.</p></div>
+        <div className="catalog-section-title"><div><span>06</span><h2>Player</h2></div><p>Representações reutilizáveis de escuta e seleção de trilhas.</p></div>
         <div className="rep-showcase-stack">
           <PlayerMini label="PLAYER_mini" current="01:23" duration="04:50" />
           <PlayerInline label="PLAYER_inline" />
+
+          <article className="catalog-isolated" id="player_track_row_selected">
+            <PlayerTrackRow
+              label="121500"
+              group="CWP · CWP-TONE-01"
+              logicalTrackUUID="c56e7dcd-5565-5f57-8a22-a5316e7a6f3e"
+              mxfName="tone-multitrack.mxf"
+              trackIndex={0}
+              segmentCount={4}
+              duration="00:01.6"
+              selected
+            />
+            <code>player_track_row_selected</code>
+          </article>
+
+          <article className="catalog-isolated" id="player_transport_idle">
+            <PlayerTransport selectedCount={2} />
+            <code>player_transport_idle</code>
+          </article>
+
+          <article className="catalog-isolated" id="player_track_selection_panel">
+            <PlayerTrackSelection tracks={[
+              {
+                label: '121500',
+                group: 'CWP · CWP-TONE-01',
+                logicalTrackUUID: 'c56e7dcd-5565-5f57-8a22-a5316e7a6f3e',
+                mxfName: 'tone-multitrack.mxf',
+                trackIndex: 0,
+                segmentCount: 4,
+                duration: '00:01.6',
+              },
+              {
+                label: '118700',
+                group: 'CWP · CWP-TONE-02',
+                logicalTrackUUID: '0b2c1947-e74d-5329-b4a2-b1619dc7ddf7',
+                mxfName: 'tone-multitrack.mxf',
+                trackIndex: 1,
+                segmentCount: 3,
+                duration: '00:02.1',
+              },
+              {
+                label: '050',
+                group: 'TEL · TEL-TONE-01',
+                logicalTrackUUID: '50704123-cd89-5099-a060-87d80b64021f',
+                mxfName: 'tone-multitrack.mxf',
+                trackIndex: 2,
+                segmentCount: 2,
+                duration: '00:02.0',
+              },
+            ]} />
+            <code>player_track_selection_panel</code>
+          </article>
         </div>
       </section>}
 
