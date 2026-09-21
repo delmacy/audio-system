@@ -77,7 +77,9 @@ jobs:
             './scripts/generator/New-TestTone.ps1',
             './scripts/generator/Invoke-ToneScenario.ps1',
             './scripts/cwp/Invoke-ServiceMonoSessionSimulator.ps1',
-            './scripts/player/Invoke-MultiTrackToneTest.ps1'
+            './scripts/player/Invoke-MultiTrackToneTest.ps1',
+            './scripts/recorder/Invoke-GrowingMxfCiSmoke.ps1',
+            './scripts/recorder/Invoke-EventFileCiSmoke.ps1'
           )) {
             $tokens = $null
             $errors = $null
@@ -247,6 +249,10 @@ jobs:
         shell: pwsh
         run: ./scripts/recorder/Invoke-GrowingMxfCiSmoke.ps1
 
+      - name: Event-file telephone E2E
+        shell: pwsh
+        run: ./scripts/recorder/Invoke-EventFileCiSmoke.ps1
+
       - name: Upload native E2E diagnostics
         if: failure()
         uses: actions/upload-artifact@v4
@@ -254,5 +260,6 @@ jobs:
           name: growing-mxf-e2e-diagnostics
           path: |
             runs/operational-recorder/**
+            runs/event-recorder/**
           if-no-files-found: ignore
           retention-days: 3
