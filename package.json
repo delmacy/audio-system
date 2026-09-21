@@ -19,6 +19,8 @@
     "system:stop": "python scripts/player/service_manager.py stop-system",
     "system:status": "python scripts/player/service_manager.py status",
     "rps:smoke": "python scripts/gateway/rps_smoke.py",
-    "rps:e2e": "python scripts/gateway/rps_telephone_e2e.py"
+    "rps:e2e": "python scripts/gateway/rps_telephone_e2e.py",
+    "rps:radio:e2e": "python scripts/gateway/rps_nontelephone_e2e.py --kind radio",
+    "rps:cwp:e2e": "python scripts/gateway/rps_nontelephone_e2e.py --kind cwp"
   }
 }
