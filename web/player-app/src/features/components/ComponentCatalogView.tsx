@@ -32,7 +32,7 @@ const CATALOG_TABS: { id: CatalogTab; label: string }[] = [
   { id: 'elements', label: 'Elementos' },
 ]
 
-export function ComponentCatalogView({ mode, status, events }: {
+export function ComponentCatalogView({ mode, status, events: _events }: {
   mode: SimulatorMode
   status: SimStatus
   events: string[]

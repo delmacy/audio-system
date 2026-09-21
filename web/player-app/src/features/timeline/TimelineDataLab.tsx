@@ -17,12 +17,6 @@ function countTracks(data: TimelineData) {
   return data.groups.reduce((sum, group) => sum + group.tracks.length, 0)
 }
 
-function windowMinutes(data: TimelineData) {
-  const start = Date.parse(data.windowStartUtc)
-  const end = Date.parse(data.windowEndUtc)
-  return Number.isFinite(start) && Number.isFinite(end) && end > start ? (end - start) / 60000 : 1
-}
-
 type PreviewWindow = 'full' | '30s' | '10s'
 
 function previewBounds(data: TimelineData, mode: PreviewWindow) {
