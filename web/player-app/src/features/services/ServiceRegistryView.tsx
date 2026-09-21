@@ -1,4 +1,4 @@
-import { Monitor, Phone, Plus, Radio, RefreshCw, Trash2 } from 'lucide-react'
+import { AlertTriangle, Monitor, Pencil, Phone, Plus, Radio, RefreshCw, Trash2, X } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 
 type ApiCwp = {
@@ -46,6 +46,15 @@ export function ServiceRegistryView() {
   const [serviceKind, setServiceKind] = useState<'RADIO' | 'TEL'>('RADIO')
   const [serviceLabel, setServiceLabel] = useState('')
   const [serviceEndpoint, setServiceEndpoint] = useState('')
+  const [editingCwp, setEditingCwp] = useState<ApiCwp | null>(null)
+  const [editingService, setEditingService] = useState<ApiService | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<{ type: 'cwp' | 'service'; id: string; label: string } | null>(null)
+  const [editCwpLabel, setEditCwpLabel] = useState('')
+  const [editCwpIp, setEditCwpIp] = useState('')
+  const [editCwpSide, setEditCwpSide] = useState<'A' | 'B'>('A')
+  const [editServiceKind, setEditServiceKind] = useState<'RADIO' | 'TEL'>('RADIO')
+  const [editServiceLabel, setEditServiceLabel] = useState('')
+  const [editServiceEndpoint, setEditServiceEndpoint] = useState('')
 
   const stats = useMemo(() => ({
     cwps: cwps.length,
@@ -134,6 +143,64 @@ export function ServiceRegistryView() {
     }
   }
 
+  const startEditCwp = (item: ApiCwp) => {
+    setEditingCwp(item)
+    setEditCwpLabel(item.label)
+    setEditCwpIp(item.ip)
+    setEditCwpSide(item.side)
+    setError('')
+  }
+
+  const saveCwpEdit = async () => {
+    if (!editingCwp || !editCwpLabel.trim() || !editCwpIp.trim()) return
+    setSaving(true)
+    setError('')
+    try {
+      await responseJson(await fetch('/api/cwps/' + encodeURIComponent(editingCwp.id), {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ label: editCwpLabel.trim(), ip: editCwpIp.trim(), side: editCwpSide }),
+      }))
+      setEditingCwp(null)
+      await load()
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Falha ao editar CWP.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const startEditService = (item: ApiService) => {
+    setEditingService(item)
+    setEditServiceKind(item.kind)
+    setEditServiceLabel(item.label)
+    setEditServiceEndpoint(item.endpoint)
+    setError('')
+  }
+
+  const saveServiceEdit = async () => {
+    if (!editingService || !editServiceLabel.trim() || !editServiceEndpoint.trim()) return
+    setSaving(true)
+    setError('')
+    try {
+      await responseJson(await fetch('/api/services/' + encodeURIComponent(editingService.id), {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({
+          kind: editServiceKind,
+          label: editServiceLabel.trim(),
+          endpoint: editServiceEndpoint.trim(),
+        }),
+      }))
+      setEditingService(null)
+      await load()
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Falha ao editar serviço.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
   const removeCwp = async (item: ApiCwp) => {
     setSaving(true)
     setError('')
@@ -213,9 +280,14 @@ export function ServiceRegistryView() {
           <span className="registry-row-meta">Lado {cwp.side}</span>
           <span className={'registry-ip-source ' + cwp.ip_source}>{cwp.ip_source === 'auto' ? 'AUTO IP' : 'MANUAL'}</span>
           <span className="registry-row-state"><i />{cwp.enabled ? 'Ativo' : 'Inativo'}</span>
-          <button type="button" className="registry-delete" disabled={saving} onClick={() => void removeCwp(cwp)} aria-label={'Excluir ' + cwp.label}>
-            <Trash2 size={15} />
-          </button>
+          <div className="registry-row-actions">
+            <button type="button" className="registry-edit" disabled={saving} onClick={() => startEditCwp(cwp)} aria-label={'Editar ' + cwp.label}>
+              <Pencil size={14} />
+            </button>
+            <button type="button" className="registry-delete" disabled={saving} onClick={() => setDeleteTarget({ type: 'cwp', id: cwp.id, label: cwp.label })} aria-label={'Excluir ' + cwp.label}>
+              <Trash2 size={15} />
+            </button>
+          </div>
         </article>)}
         {!loading && cwps.length === 0 && <div className="registry-empty">Nenhum CWP cadastrado.</div>}
       </div>
@@ -256,12 +328,78 @@ export function ServiceRegistryView() {
           <span className={'registry-kind ' + service.kind.toLowerCase()}>{service.kind === 'RADIO' ? 'RÁDIO' : 'TEL'}</span>
           <span className="registry-row-meta">Global</span>
           <span className="registry-row-state"><i />{service.enabled ? 'Ativo' : 'Inativo'}</span>
-          <button type="button" className="registry-delete" disabled={saving} onClick={() => void removeService(service)} aria-label={'Excluir ' + service.label}>
-            <Trash2 size={15} />
-          </button>
+          <div className="registry-row-actions">
+            <button type="button" className="registry-edit" disabled={saving} onClick={() => startEditService(service)} aria-label={'Editar ' + service.label}>
+              <Pencil size={14} />
+            </button>
+            <button type="button" className="registry-delete" disabled={saving} onClick={() => setDeleteTarget({ type: 'service', id: service.id, label: service.label })} aria-label={'Excluir ' + service.label}>
+              <Trash2 size={15} />
+            </button>
+          </div>
         </article>)}
         {!loading && services.length === 0 && <div className="registry-empty">Nenhum serviço cadastrado.</div>}
       </div>
     </section>
+
+    {editingCwp && <div className="registry-modal-backdrop" role="presentation" onMouseDown={() => setEditingCwp(null)}>
+      <section className="registry-modal" role="dialog" aria-modal="true" aria-label={'Editar ' + editingCwp.label} onMouseDown={event => event.stopPropagation()}>
+        <header>
+          <div><span>Editar CWP</span><strong>{editingCwp.label}</strong></div>
+          <button type="button" onClick={() => setEditingCwp(null)} aria-label="Fechar"><X size={17} /></button>
+        </header>
+        <div className="registry-modal-form">
+          <label>Nome<input value={editCwpLabel} onChange={event => setEditCwpLabel(event.target.value)} /></label>
+          <label>IP<input value={editCwpIp} onChange={event => setEditCwpIp(event.target.value)} /></label>
+          <label>Lado<select value={editCwpSide} onChange={event => setEditCwpSide(event.target.value as 'A' | 'B')}><option value="A">A</option><option value="B">B</option></select></label>
+        </div>
+        <footer>
+          <button type="button" onClick={() => setEditingCwp(null)}>Cancelar</button>
+          <button type="button" className="primary" disabled={saving || !editCwpLabel.trim() || !editCwpIp.trim()} onClick={() => void saveCwpEdit()}>Salvar alterações</button>
+        </footer>
+      </section>
+    </div>}
+
+    {editingService && <div className="registry-modal-backdrop" role="presentation" onMouseDown={() => setEditingService(null)}>
+      <section className="registry-modal" role="dialog" aria-modal="true" aria-label={'Editar ' + editingService.label} onMouseDown={event => event.stopPropagation()}>
+        <header>
+          <div><span>Editar serviço</span><strong>{editingService.label}</strong></div>
+          <button type="button" onClick={() => setEditingService(null)} aria-label="Fechar"><X size={17} /></button>
+        </header>
+        <div className="registry-modal-form">
+          <label>Tipo<select value={editServiceKind} onChange={event => setEditServiceKind(event.target.value as 'RADIO' | 'TEL')}><option value="RADIO">Rádio</option><option value="TEL">Telefone</option></select></label>
+          <label>Nome<input value={editServiceLabel} onChange={event => setEditServiceLabel(event.target.value)} /></label>
+          <label className="wide">Endpoint<input value={editServiceEndpoint} onChange={event => setEditServiceEndpoint(event.target.value)} /></label>
+        </div>
+        <footer>
+          <button type="button" onClick={() => setEditingService(null)}>Cancelar</button>
+          <button type="button" className="primary" disabled={saving || !editServiceLabel.trim() || !editServiceEndpoint.trim()} onClick={() => void saveServiceEdit()}>Salvar alterações</button>
+        </footer>
+      </section>
+    </div>}
+
+    {deleteTarget && <div className="registry-modal-backdrop" role="presentation" onMouseDown={() => setDeleteTarget(null)}>
+      <section className="registry-modal registry-confirm-modal" role="alertdialog" aria-modal="true" aria-label={'Confirmar exclusão de ' + deleteTarget.label} onMouseDown={event => event.stopPropagation()}>
+        <div className="registry-confirm-icon"><AlertTriangle size={24} /></div>
+        <div>
+          <span>Confirmar exclusão</span>
+          <h2>{deleteTarget.label}</h2>
+          <p>Esta ação remove o cadastro persistido do sistema. Deseja continuar?</p>
+        </div>
+        <footer>
+          <button type="button" onClick={() => setDeleteTarget(null)}>Cancelar</button>
+          <button type="button" className="danger" disabled={saving} onClick={() => {
+            const target = deleteTarget
+            setDeleteTarget(null)
+            if (target.type === 'cwp') {
+              const item = cwps.find(cwp => cwp.id === target.id)
+              if (item) void removeCwp(item)
+            } else {
+              const item = services.find(service => service.id === target.id)
+              if (item) void removeService(item)
+            }
+          }}>Excluir definitivamente</button>
+        </footer>
+      </section>
+    </div>}
   </main>
 }

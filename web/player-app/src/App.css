@@ -2021,3 +2021,89 @@ button:focus-visible,input:focus-visible,select:focus-visible,[role=slider]:focu
 }
 .registry-ip-source.auto{background:#e9f7ef;color:#278454}
 .registry-empty{padding:20px;text-align:center;color:#8091a2;font-size:10px}
+
+
+.registry-row-actions{display:flex;align-items:center;justify-content:flex-end;gap:4px}
+.registry-edit,.registry-delete{
+  width:30px;height:30px;display:grid;place-items:center;border:1px solid transparent;border-radius:7px;background:transparent;color:#8d9cab
+}
+.registry-edit:hover{border-color:#bfd7ee;background:#f2f8fe;color:#2870b4}
+.registry-delete:hover{border-color:#f0c5c5;background:#fff3f3;color:#c94646}
+
+.registry-modal-backdrop{
+  position:fixed;
+  inset:0;
+  z-index:100;
+  display:grid;
+  place-items:center;
+  padding:20px;
+  background:rgba(31,48,67,.22);
+  backdrop-filter:blur(2px);
+}
+.registry-modal{
+  width:min(560px,calc(100vw - 32px));
+  overflow:hidden;
+  border:1px solid #d8e3ed;
+  border-radius:12px;
+  background:#fff;
+  box-shadow:0 28px 80px rgba(31,48,67,.22);
+}
+.registry-modal>header{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  padding:12px 14px;
+  border-bottom:1px solid #e5ecf3;
+  background:#f8fbfe;
+}
+.registry-modal>header>div{display:grid;gap:2px}
+.registry-modal>header span{font-size:8px;text-transform:uppercase;color:#8394a5}
+.registry-modal>header strong{font-size:12px;color:#2d465f}
+.registry-modal>header button{
+  width:30px;height:30px;display:grid;place-items:center;border:0;border-radius:7px;background:transparent;color:#708398
+}
+.registry-modal-form{
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:10px;
+  padding:14px;
+}
+.registry-modal-form label{display:grid;gap:5px;font-size:8px;font-weight:700;color:#60758a}
+.registry-modal-form label.wide{grid-column:1/-1}
+.registry-modal-form input,.registry-modal-form select{
+  height:35px;border:1px solid #d6e1eb;border-radius:7px;background:#fff;padding:0 9px;color:#2d455d;font-size:10px
+}
+.registry-modal>footer{
+  display:flex;
+  justify-content:flex-end;
+  gap:7px;
+  padding:11px 14px;
+  border-top:1px solid #e8eef4;
+  background:#fbfdff;
+}
+.registry-modal>footer button{
+  min-height:32px;border:1px solid #d5e0e9;border-radius:7px;background:#fff;padding:0 11px;color:#596f84;font-size:9px;font-weight:750
+}
+.registry-modal>footer button.primary{border-color:#1473db;background:#1473db;color:#fff}
+.registry-modal>footer button.danger{border-color:#d44c4c;background:#d44c4c;color:#fff}
+
+.registry-confirm-modal{
+  width:min(430px,calc(100vw - 32px));
+  display:grid;
+  grid-template-columns:46px 1fr;
+  gap:10px;
+  padding:16px 16px 0;
+}
+.registry-confirm-icon{
+  width:42px;height:42px;display:grid;place-items:center;border-radius:10px;background:#fff1f1;color:#cf4141
+}
+.registry-confirm-modal>div:nth-child(2){display:grid;gap:4px}
+.registry-confirm-modal>div:nth-child(2)>span{font-size:8px;text-transform:uppercase;color:#9a6a6a}
+.registry-confirm-modal h2{margin:0;font-size:16px;color:#394b5c}
+.registry-confirm-modal p{margin:0;color:#748597;font-size:10px;line-height:1.45}
+.registry-confirm-modal>footer{grid-column:1/-1;margin:4px -16px 0}
+
+@media(max-width:700px){
+  .registry-modal-form{grid-template-columns:1fr}
+  .registry-modal-form label.wide{grid-column:auto}
+}
