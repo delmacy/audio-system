@@ -69,6 +69,29 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Parse tone PowerShell tools
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          foreach ($file in @(
+            './scripts/generator/New-TestTone.ps1',
+            './scripts/generator/Invoke-ToneScenario.ps1',
+            './scripts/cwp/Invoke-ServiceMonoSessionSimulator.ps1',
+            './scripts/player/Invoke-MultiTrackToneTest.ps1'
+          )) {
+            $tokens = $null
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile(
+              (Resolve-Path $file).Path,
+              [ref]$tokens,
+              [ref]$errors
+            ) | Out-Null
+            if ($errors.Count -gt 0) {
+              $messages = ($errors | ForEach-Object { $_.Message }) -join '; '
+              throw "PowerShell parse failed for $file : $messages"
+            }
+          }
+
       - name: Closure handoff smoke
         shell: pwsh
         run: ./scripts/closure/Invoke-ClosureBacklogSmoke.ps1
