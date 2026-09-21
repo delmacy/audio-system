@@ -115,9 +115,9 @@ jobs:
         with:
           python-version: '3.13'
 
-      - name: Cache installed GStreamer development bundle
+      - name: Restore installed GStreamer development bundle
         id: gstreamer-bundle-cache
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: ${{ runner.temp }}\gstreamer-installed\1.28.7\msvc_x86_64
           key: gstreamer-installed-${{ runner.os }}-msvc-x86_64-1.28.7-devel-v1
@@ -153,6 +153,13 @@ jobs:
           if ($process.ExitCode -ne 0) {
             throw "GStreamer installer failed with exit code $($process.ExitCode)"
           }
+
+      - name: Save installed GStreamer development bundle
+        if: steps.gstreamer-bundle-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}\gstreamer-installed\1.28.7\msvc_x86_64
+          key: gstreamer-installed-${{ runner.os }}-msvc-x86_64-1.28.7-devel-v1
 
       - name: Configure GStreamer environment
         shell: pwsh
