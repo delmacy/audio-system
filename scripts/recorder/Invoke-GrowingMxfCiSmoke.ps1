@@ -130,17 +130,7 @@ $recorderArgs = @(
 )
 $recorder = Start-NativeProcessRedirected -FilePath $exe -Arguments $recorderArgs -StdOutPath $stdout -StdErrPath $stderr -WorkingDirectory $root
 
-function Test-TrackHasConfirmedMedia {
-    param(
-        [Parameter(Mandatory=$true)]$LockState,
-        [Parameter(Mandatory=$true)][string]$LogicalTrackUuid
-    )
-
-    if (-not (Test-Path -LiteralPath $audit)) { return $false }
-    $originText = [string]$LockState.timeline_origin_utc
-    if (-not $originText) { return $false }
-
-    try {
+try {
         $origin = [DateTimeOffset]::Parse($originText)
         [int64]$committedNs = [int64]$LockState.committed_position_ns
         $confirmedEnd = $origin.AddTicks([int64]($committedNs / 100))
@@ -290,27 +280,24 @@ try {
         $running += [pscustomobject]@{ track=$track; handle=$handle }
     }
 
-    $first = Wait-TrackConfirmedMedia -LogicalTrackUuid $tracks[0].logical -TimeoutSeconds 15
-
+    $probe = Join-Path $root 'scripts\player\growing_mxf_live_probe.py'
+    $probe1 = Join-Path $runDir 'probe-first.wav'
+    $probe1Output = & python $probe '--logical-track-uuid' $tracks[0].logical '--output' $probe1 '--min-generation' '1' '--wait-seconds' '15'
+    if ($LASTEXITCODE -ne 0) { throw 'First growing-MXF playback probe failed.' }
+    $first = ($probe1Output -join [Environment]::NewLine) | ConvertFrom-Json
 
     if (-not (Test-Path -LiteralPath $partial)) { throw 'Growing MXF partial does not exist at first watermark.' }
     if (Test-Path -LiteralPath $final) { throw 'Final MXF exists before EOS; growing test is not exercising an open file.' }
     if ($recorder.Process.HasExited) { throw 'Recorder is not alive during growing playback probe.' }
 
-    $probe = Join-Path $root 'scripts\player\growing_mxf_live_probe.py'
-    $probe1 = Join-Path $runDir 'probe-first.wav'
-    & python $probe '--logical-track-uuid' $tracks[0].logical '--output' $probe1 '--min-generation' ([string]$first.commit_generation)
-    if ($LASTEXITCODE -ne 0) { throw 'First growing-MXF playback probe failed.' }
-
-    $second = Wait-TrackConfirmedMedia -LogicalTrackUuid $tracks[1].logical -TimeoutSeconds 12 -MinGeneration ([uint64]$first.commit_generation + 1)
+    $probe2 = Join-Path $runDir 'probe-second.wav'
+    $minSecondGeneration = [uint64]$first.commit_generation + 1
+    $probe2Output = & python $probe '--logical-track-uuid' $tracks[1].logical '--output' $probe2 '--min-generation' ([string]$minSecondGeneration) '--wait-seconds' '12'
+    if ($LASTEXITCODE -ne 0) { throw 'Second growing-MXF playback probe failed.' }
+    $second = ($probe2Output -join [Environment]::NewLine) | ConvertFrom-Json
     if ([uint64]$second.committed_position_ns -le [uint64]$first.committed_position_ns) {
         throw 'Growing-MXF watermark did not advance over confirmed media for the second track.'
     }
-
-
-    $probe2 = Join-Path $runDir 'probe-second.wav'
-    & python $probe '--logical-track-uuid' $tracks[1].logical '--output' $probe2 '--min-generation' ([string]$second.commit_generation)
-    if ($LASTEXITCODE -ne 0) { throw 'Second growing-MXF playback probe failed.' }
 
     if ((Get-Item -LiteralPath $probe2).Length -le (Get-Item -LiteralPath $probe1).Length) {
         Write-Host 'NOTE: per-track WAV lengths are not ordered; watermark advancement is asserted directly.' -ForegroundColor Yellow
