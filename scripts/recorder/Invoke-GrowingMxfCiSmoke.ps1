@@ -302,17 +302,9 @@ try {
     & python $probe '--logical-track-uuid' $tracks[0].logical '--output' $probe1 '--min-generation' ([string]$first.commit_generation)
     if ($LASTEXITCODE -ne 0) { throw 'First growing-MXF playback probe failed.' }
 
-    $deadline = [DateTime]::UtcNow.AddSeconds(12)
-    $second = $null
-    while (-not $second) {
-        $candidate = Wait-TrackConfirmedMedia -LogicalTrackUuid $tracks[1].logical -TimeoutSeconds 2 -MinGeneration ([uint64]$first.commit_generation + 1)
-        if ([uint64]$candidate.committed_position_ns -gt [uint64]$first.committed_position_ns) {
-            $second = $candidate
-            break
-        }
-        if ([DateTime]::UtcNow -gt $deadline) {
-            throw 'Growing-MXF watermark did not advance over confirmed media for the second track.'
-        }
+    $second = Wait-TrackConfirmedMedia -LogicalTrackUuid $tracks[1].logical -TimeoutSeconds 12 -MinGeneration ([uint64]$first.commit_generation + 1)
+    if ([uint64]$second.committed_position_ns -le [uint64]$first.committed_position_ns) {
+        throw 'Growing-MXF watermark did not advance over confirmed media for the second track.'
     }
 
 
