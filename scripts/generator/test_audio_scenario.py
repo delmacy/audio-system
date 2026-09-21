@@ -58,6 +58,27 @@ class ToneScenarioTests(unittest.TestCase):
             first["tracks"][1]["expected_intervals"],
         )
 
+    def test_random_schedule_is_100ms_edit_unit_aligned(self) -> None:
+        resolved = resolve_scenario({
+            "schema": "audio-system.tone-scenario.v1",
+            "duration_ms": 3137,
+            "seed": 48291,
+            "tracks": [{
+                "id": "a",
+                "mode": "random_pulsed",
+                "frequency_hz": 880,
+                "random_start": {"min_ms": 17, "max_ms": 583},
+                "random_on": {"min_ms": 217, "max_ms": 777},
+                "random_off": {"min_ms": 119, "max_ms": 519},
+            }],
+        })
+        track = resolved["tracks"][0]
+        self.assertEqual(resolved["duration_ms"] % 100, 0)
+        self.assertEqual(track["start_offset_ms"] % 100, 0)
+        for burst in track["bursts"]:
+            self.assertEqual(burst["on_ms"] % 100, 0)
+            self.assertEqual(burst["off_ms"] % 100, 0)
+
     def test_one_frequency_can_target_multiple_tracks(self) -> None:
         resolved = resolve_scenario({
             "schema": "audio-system.tone-scenario.v1",
