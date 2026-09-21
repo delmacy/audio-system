@@ -13,6 +13,16 @@ from config_store import get_topology_revision, list_cwps, list_services
 from recording_layout import ROOT, recording_window_bounds, recording_window_paths
 
 IDENTITY_NAMESPACE = uuid.UUID("d7ca84d3-730d-42f6-87bb-fb5c7f9874e6")
+AUDIO_FORMAT = {
+    "codec": "CCITT_ALAW",
+    "standard": "ITU-T G.711 A-law",
+    "rtp_encoding": "PCMA",
+    "sample_rate_hz": 8000,
+    "bits_per_sample": 8,
+    "channels": 1,
+    "channel_layout": "mono",
+    "rtp_payload_type": 8,
+}
 
 
 def _utc(value: datetime) -> str:
@@ -187,6 +197,7 @@ def build_topology() -> dict:
             "recording_window_start_utc": _utc(window_start),
             "recording_window_end_utc": _utc(window_end),
             "track_count": len(category_tracks),
+            "audio_format": dict(AUDIO_FORMAT),
         }
 
     for track in tracks:
@@ -199,6 +210,7 @@ def build_topology() -> dict:
         track["final_mxf"] = file["path"]
         track["mxf_name"] = Path(file["path"]).name
         track["rtp_port"] = rtp_port
+        track["audio_format"] = dict(AUDIO_FORMAT)
         rtp_port += 1
         if rtp_port > 29999:
             raise ValueError("Recorder RTP allocation exceeded configured 20000-29999 range")
@@ -225,6 +237,7 @@ def build_topology() -> dict:
         "schema": "audio-system.recorder-topology.v1",
         "generated_utc": _utc(now),
         "segment_sequence": segment_sequence,
+        "audio_format": dict(AUDIO_FORMAT),
         "settings": settings,
         "topology_revision": get_topology_revision(),
         "window_start_utc": _utc(window_start),
