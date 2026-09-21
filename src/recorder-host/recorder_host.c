@@ -1777,7 +1777,6 @@ static int handle_rtsp_request(RecorderHost *host, ClientConnection *client, cha
             if (!session->event_file_open && session->event_sequence > 0) {
                 session->event_media_start_utc[0] = 0;
                 session->event_last_event_utc[0] = 0;
-                session->leg_id[0] = 0;
                 ensure_event_identity(session);
                 safe_copy(session->event_state, sizeof(session->event_state),
                     _stricmp(session->cfg.session_kind, "telephone") == 0 ? "RINGING" : "ACTIVE");
@@ -2506,8 +2505,14 @@ static int run_server(RecorderHost *host) {
             }
             for (i = 0; i < host->session_count; i++) {
                 if (!host->sessions[i].finalized && host->sessions[i].finalize_state == 0) {
-                    begin_finalize_session(&host->sessions[i],
-                        "External recorder shutdown requested");
+                    if (host->cfg.event_files_mode) {
+                        if (!finalize_session(&host->sessions[i],
+                                "External recorder shutdown requested"))
+                            host->server_failed = 1;
+                    } else {
+                        begin_finalize_session(&host->sessions[i],
+                            "External recorder shutdown requested");
+                    }
                 }
             }
         }
@@ -2548,11 +2553,17 @@ static int run_server(RecorderHost *host) {
             }
             for (i = 0; i < host->session_count; i++) {
                 if (!host->sessions[i].finalized && host->sessions[i].finalize_state == 0) {
-                    begin_finalize_session(&host->sessions[i],
-                        host->cfg.shared_mxf_by_output
-                            ? "Scheduled recording window rotation"
-                            : "Host timeout finalized remaining session");
-                    if (!host->cfg.shared_mxf_by_output) host->server_failed = 1;
+                    if (host->cfg.event_files_mode) {
+                        if (!finalize_session(&host->sessions[i],
+                                "Host timeout finalized event route"))
+                            host->server_failed = 1;
+                    } else {
+                        begin_finalize_session(&host->sessions[i],
+                            host->cfg.shared_mxf_by_output
+                                ? "Scheduled recording window rotation"
+                                : "Host timeout finalized remaining session");
+                        if (!host->cfg.shared_mxf_by_output) host->server_failed = 1;
+                    }
                 }
             }
         }
