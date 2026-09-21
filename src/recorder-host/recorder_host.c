@@ -1,7 +1,7 @@
 #define _CRT_SECURE_NO_WARNINGS
 #define WIN32_LEAN_AND_MEAN
 #ifndef FD_SETSIZE
-#define FD_SETSIZE 512
+#define FD_SETSIZE 2048
 #endif
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -13,6 +13,7 @@
 #include <ctype.h>
 #include <objbase.h>
 #include "storage_writer.h"
+#include "event_file_manager.h"
 
 #pragma comment(lib, "Ws2_32.lib")
 #pragma comment(lib, "Ole32.lib")
@@ -20,8 +21,8 @@
 #define RTSP_BUFFER_SIZE 65536
 #define RTP_PACKET_MAX 65536
 #define DEFAULT_MAX_SECONDS 120
-#define MAX_SESSIONS 256
-#define MAX_CLIENTS 128
+#define MAX_SESSIONS 2048
+#define MAX_CLIENTS 2048
 #define MAX_SHARED_GROUPS 16
 #define SESSION_MAP_FIELDS 16
 #define LIVE_COMMIT_INTERVAL_MS 1000
@@ -66,6 +67,16 @@ struct RecorderSession {
     GstBus *bus;
     SOCKET rtp_socket;
     char session_id[128];
+    char interaction_id[128];
+    char leg_id[128];
+    char event_media_start_utc[64];
+    char event_last_event_utc[64];
+    char event_state[32];
+    int event_file_open;
+    int event_close_requested;
+    int event_rearm_requested;
+    int event_answered;
+    unsigned int event_sequence;
     int announced;
     int setup_done;
     int recording;
@@ -140,6 +151,8 @@ typedef struct HostConfig {
     int rotate_window_after_pauses;
     int rotate_window_max_count;
     int shared_mxf_by_output;
+    int event_files_mode;
+    char recording_root[4096];
     char topology_watch_file[4096];
     unsigned long long topology_revision;
     char shutdown_watch_file[4096];
@@ -289,7 +302,7 @@ static char *stristr(const char *haystack, const char *needle) {
 }
 
 static void audit_event(RecorderHost *host, RecorderSession *session, const char *event, const char *detail) {
-    char now[64], e_event[256], e_detail[4096], e_session[256], e_logical[256], e_instance[256], e_file[256], e_route[1024], e_kind[128];
+    char now[64], e_event[256], e_detail[4096], e_session[256], e_logical[256], e_instance[256], e_file[256], e_route[1024], e_kind[128], e_interaction[256], e_leg[256], e_media_start[128], e_event_state[128];
     if (!host || !host->audit) return;
     storage_utc_now(now, sizeof(now));
     json_escape(event, e_event, sizeof(e_event));
@@ -300,10 +313,15 @@ static void audit_event(RecorderHost *host, RecorderSession *session, const char
     json_escape(session ? session->cfg.file_id : "", e_file, sizeof(e_file));
     json_escape(session ? session->cfg.route_key : "", e_route, sizeof(e_route));
     json_escape(session ? session->cfg.session_kind : "", e_kind, sizeof(e_kind));
+    json_escape(session ? session->interaction_id : "", e_interaction, sizeof(e_interaction));
+    json_escape(session ? session->leg_id : "", e_leg, sizeof(e_leg));
+    json_escape(session ? session->event_media_start_utc : "", e_media_start, sizeof(e_media_start));
+    json_escape(session ? session->event_state : "", e_event_state, sizeof(e_event_state));
     EnterCriticalSection(&host->audit_lock);
     fprintf(host->audit,
-        "{\"ts_utc\":\"%s\",\"event\":\"%s\",\"session_id\":\"%s\",\"route_key\":\"%s\",\"file_id\":\"%s\",\"logical_track_uuid\":\"%s\",\"track_instance_uuid\":\"%s\",\"track_index\":%d,\"session_kind\":\"%s\",\"detail\":\"%s\"}\n",
-        now, e_event, e_session, e_route, e_file, e_logical, e_instance, session ? session->track_index : -1, e_kind, e_detail);
+        "{\"ts_utc\":\"%s\",\"event\":\"%s\",\"session_id\":\"%s\",\"route_key\":\"%s\",\"file_id\":\"%s\",\"logical_track_uuid\":\"%s\",\"track_instance_uuid\":\"%s\",\"track_index\":%d,\"session_kind\":\"%s\",\"interaction_id\":\"%s\",\"leg_id\":\"%s\",\"media_start_utc\":\"%s\",\"event_state\":\"%s\",\"detail\":\"%s\"}\n",
+        now, e_event, e_session, e_route, e_file, e_logical, e_instance, session ? session->track_index : -1, e_kind,
+        e_interaction, e_leg, e_media_start, e_event_state, e_detail);
     fflush(host->audit);
     LeaveCriticalSection(&host->audit_lock);
 }
@@ -470,6 +488,9 @@ static int parse_host_config(int argc, char **argv, RecorderHost *host) {
     host->cfg.rotate_window_after_pauses = atoi((v = arg_value(argc, argv, "--rotate-window-after-pauses")) ? v : "0");
     host->cfg.rotate_window_max_count = atoi((v = arg_value(argc, argv, "--rotate-window-max-count")) ? v : "0");
     host->cfg.shared_mxf_by_output = has_arg(argc, argv, "--shared-mxf-by-output");
+    host->cfg.event_files_mode = has_arg(argc, argv, "--event-files");
+    safe_copy(host->cfg.recording_root, sizeof(host->cfg.recording_root),
+        (v = arg_value(argc, argv, "--recording-root")) ? v : "recordings");
     safe_copy(host->cfg.topology_watch_file, sizeof(host->cfg.topology_watch_file),
         (v = arg_value(argc, argv, "--topology-watch-file")) ? v : "");
     host->cfg.topology_revision = _strtoui64(
@@ -477,6 +498,11 @@ static int parse_host_config(int argc, char **argv, RecorderHost *host) {
     safe_copy(host->cfg.shutdown_watch_file, sizeof(host->cfg.shutdown_watch_file),
         (v = arg_value(argc, argv, "--shutdown-watch-file")) ? v : "");
     if (!host->cfg.audit_path[0] || !host->cfg.plugin_dll[0]) return 0;
+    if (host->cfg.shared_mxf_by_output && host->cfg.event_files_mode) {
+        g_printerr("--shared-mxf-by-output and --event-files are mutually exclusive.\n");
+        return 0;
+    }
+    if (host->cfg.event_files_mode && !host->cfg.recording_root[0]) return 0;
     if (host->cfg.rtsp_port < 1 || host->cfg.rtsp_port > 65535 || host->cfg.max_seconds < 1) return 0;
     if (host->cfg.session_map_path[0]) return load_session_map(host, host->cfg.session_map_path);
     return parse_legacy_session(argc, argv, host);
@@ -939,9 +965,12 @@ static int open_bound_socket(const char *ip, int port, int type, int protocol, S
     SOCKET s;
     struct sockaddr_in addr;
     int reuse = 1;
+    int recvbuf = 131072;
     s = socket(AF_INET, type, protocol);
     if (s == INVALID_SOCKET) return 0;
     setsockopt(s, SOL_SOCKET, SO_REUSEADDR, (const char *)&reuse, sizeof(reuse));
+    if (type == SOCK_DGRAM)
+        setsockopt(s, SOL_SOCKET, SO_RCVBUF, (const char *)&recvbuf, sizeof(recvbuf));
     memset(&addr, 0, sizeof(addr));
     addr.sin_family = AF_INET;
     addr.sin_port = htons((u_short)port);
@@ -973,12 +1002,22 @@ static int init_session(RecorderHost *host, RecorderSession *session, int index)
     session->window_rotation_enabled = (!session->shared_group && session->rotate_after_pause_count > 0 && session->rotate_max_count > 0);
     session->rotations_completed = 0;
     session->windows_closed_complete = 0;
-    session->window_open_count = 1;
+    session->window_open_count = host->cfg.event_files_mode ? 0 : 1;
+    session->event_file_open = 0;
+    session->event_close_requested = 0;
+    session->event_rearm_requested = 0;
+    session->event_answered = 0;
+    session->event_sequence = 0;
+    session->interaction_id[0] = 0;
+    session->leg_id[0] = 0;
+    session->event_media_start_utc[0] = 0;
+    session->event_last_event_utc[0] = 0;
+    safe_copy(session->event_state, sizeof(session->event_state), host->cfg.event_files_mode ? "IDLE" : "N/A");
     derive_rotation_stem(session->cfg.output_final, session->rotation_stem, sizeof(session->rotation_stem));
     if (session->window_rotation_enabled) {
         build_segment_paths(session, session->cfg.segment_sequence);
     }
-    if (!session->shared_group) {
+    if (!session->shared_group && !host->cfg.event_files_mode) {
         if (!storage_writer_open(&session->writer,
             session->cfg.output_partial,
             session->cfg.output_final,
@@ -1001,10 +1040,13 @@ static int init_session(RecorderHost *host, RecorderSession *session, int index)
     if (!open_bound_socket(host->cfg.bind_ip, session->cfg.rtp_port, SOCK_DGRAM, IPPROTO_UDP, &session->rtp_socket)) {
         g_printerr("Could not bind RTP route=%s %s:%d WSA=%d.\n", session->cfg.route_key, host->cfg.bind_ip, session->cfg.rtp_port, WSAGetLastError());
         if (session->pipeline) gst_element_set_state(session->pipeline, GST_STATE_NULL);
-        if (!session->shared_group) storage_writer_abort(&session->writer);
+        if (!session->shared_group && !host->cfg.event_files_mode) storage_writer_abort(&session->writer);
         return 0;
     }
-    audit_event(host, session, "NEXT_WINDOW_ARMED", "Session writer/pipeline/RTP socket prepared before RTSP traffic");
+    audit_event(host, session, "NEXT_WINDOW_ARMED",
+        host->cfg.event_files_mode
+            ? "Event route armed with RTP socket; MXF writer will be materialized from first accepted media timestamp"
+            : "Session writer/pipeline/RTP socket prepared before RTSP traffic");
     return 1;
 }
 
