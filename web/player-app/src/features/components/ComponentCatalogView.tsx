@@ -46,7 +46,6 @@ export function ComponentCatalogView({ mode, status, events: _events }: {
   events: string[]
 }) {
   const [previewMode, setPreviewMode] = useState<SimulatorMode>(mode)
-  const [expanded, setExpanded] = useState<string[]>(['cwp-a01'])
   const [catalogTab, setCatalogTab] = useState<CatalogTab>('cwp')
 
   const sample = SIM_CWPS[0]
@@ -106,9 +105,7 @@ export function ComponentCatalogView({ mode, status, events: _events }: {
           </div>
           <CwpListItem cwp={cwpListItem} mode={previewMode} />
           <div className="catalog-isolated medium">
-            <CwpFull cwp={cwpFull} mode={previewMode} expanded={expanded.includes(sample.id)}
-              onToggle={() => setExpanded(expanded.includes(sample.id) ? [] : [sample.id])}
-              registeredRadios={registeredRadios} registeredTelephones={registeredTelephones} />
+            <CwpFull cwp={cwpFull} mode={previewMode} />
           </div>
         </div>
       </section>}

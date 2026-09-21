@@ -1,143 +1,78 @@
-import { ChevronRight, FileText, Monitor, Phone, Radio, Wrench } from 'lucide-react'
+import { Save } from 'lucide-react'
 import { useEffect, useState } from 'react'
-import { TelephoneDialer } from '@/representations/telephone/TelephoneDialer'
-import type { CwpConfig, ServiceConfig, SimulatorMode } from '@/features/simulator/model'
+import type { CwpConfig, SimulatorMode } from '@/features/simulator/model'
 
-function uniqueByLabel(services: ServiceConfig[]) {
-  const map = new Map<string, ServiceConfig>()
-  services.forEach(service => {
-    if (!map.has(service.label)) map.set(service.label, service)
-  })
-  return Array.from(map.values())
+export type CwpFullDraft = {
+  label: string
+  side: 'A' | 'B'
+  consoleIp: string
+  radios: number
+  telephones: number
+  notes: string
 }
 
 export function CwpFull({
   cwp,
   mode,
-  expanded,
-  onToggle,
-  collapsible = true,
-  showConfigActions = true,
-  showDetails = true,
-  registeredRadios,
-  registeredTelephones,
-  activeRadioIds,
-  onActiveRadioIdsChange,
+  onSave,
+  onCancel,
 }: {
   cwp: CwpConfig
   mode: SimulatorMode
-  expanded: boolean
-  onToggle?: () => void
-  collapsible?: boolean
-  showConfigActions?: boolean
-  showDetails?: boolean
-  registeredRadios?: ServiceConfig[]
-  registeredTelephones?: ServiceConfig[]
-  activeRadioIds?: string[]
-  onActiveRadioIdsChange?: (ids: string[]) => void
+  onSave?: (draft: CwpFullDraft) => void
+  onCancel?: () => void
 }) {
   const config = cwp[mode]
-  const ownRadios = config.services.filter(service => service.kind === 'RADIO')
-  const ownTelephones = config.services.filter(service => service.kind === 'TEL')
-  const radios = uniqueByLabel((registeredRadios ?? ownRadios).filter(service => service.kind === 'RADIO'))
-  const telephones = uniqueByLabel((registeredTelephones ?? ownTelephones).filter(service => service.kind === 'TEL'))
-  const initialActive = ownRadios.filter(service => service.status === 'active').map(service => service.id)
-  const [localActiveRadioIds, setLocalActiveRadioIds] = useState<string[]>(initialActive)
-  const [dialerSource, setDialerSource] = useState<ServiceConfig | null>(null)
+  const buildDraft = (): CwpFullDraft => ({
+    label: cwp.label,
+    side: cwp.side,
+    consoleIp: config.consoleIp,
+    radios: config.radios,
+    telephones: config.telephones,
+    notes: config.notes,
+  })
+  const [draft, setDraft] = useState<CwpFullDraft>(buildDraft)
 
   useEffect(() => {
-    if (activeRadioIds === undefined) {
-      setLocalActiveRadioIds(
-        cwp[mode].services
-          .filter(service => service.kind === 'RADIO' && service.status === 'active')
-          .map(service => service.id),
-      )
-    }
-  }, [activeRadioIds, cwp, mode])
+    setDraft({
+      label: cwp.label,
+      side: cwp.side,
+      consoleIp: cwp[mode].consoleIp,
+      radios: cwp[mode].radios,
+      telephones: cwp[mode].telephones,
+      notes: cwp[mode].notes,
+    })
+  }, [cwp, mode])
 
-  const currentActiveRadioIds = activeRadioIds ?? localActiveRadioIds
+  const radios = config.services.filter(service => service.kind === 'RADIO')
+  const telephones = config.services.filter(service => service.kind === 'TEL')
 
-  const setRadioActive = (radioId: string, active: boolean) => {
-    const next = active
-      ? Array.from(new Set([...currentActiveRadioIds, radioId]))
-      : currentActiveRadioIds.filter(id => id !== radioId)
-    if (activeRadioIds === undefined) setLocalActiveRadioIds(next)
-    onActiveRadioIdsChange?.(next)
-  }
-
-  const header = <>
-    <span className="cwp-icon"><Monitor size={24} /></span>
-    <span className="cwp-head">
-      <strong>{cwp.label}</strong>
-      <small><i className="status-dot" />Online · {config.consoleIp}</small>
-    </span>
-    {collapsible && <ChevronRight size={20} className={expanded ? 'open' : ''} />}
-  </>
-
-  return <article className={'cwp-card' + (expanded ? ' expanded' : '')}>
-    {collapsible
-      ? <button type="button" className="cwp-main" onClick={onToggle} aria-expanded={expanded}>{header}</button>
-      : <div className="cwp-main cwp-main-static">{header}</div>}
-
-    <div className="cwp-meta">
-      <span>IP: {config.consoleIp}</span>
-      <span>Rádios ativos: {currentActiveRadioIds.length}</span>
-      <span>Ramais disponíveis: {telephones.length}</span>
+  return <section className="cwp-full-config" id="cwp_full">
+    <div className="cwp-full-grid">
+      <label>Nome<input value={draft.label} onChange={event => setDraft({ ...draft, label: event.target.value })} /></label>
+      <label>Lado<select value={draft.side} onChange={event => setDraft({ ...draft, side: event.target.value as 'A' | 'B' })}>
+        <option value="A">A</option><option value="B">B</option>
+      </select></label>
+      <label className="wide">Console IP<input value={draft.consoleIp} onChange={event => setDraft({ ...draft, consoleIp: event.target.value })} /></label>
+      <label>Rádios configurados<input type="number" min="0" value={draft.radios} onChange={event => setDraft({ ...draft, radios: Number(event.target.value) })} /></label>
+      <label>Telefones configurados<input type="number" min="0" value={draft.telephones} onChange={event => setDraft({ ...draft, telephones: Number(event.target.value) })} /></label>
+      <label className="wide">Observações<textarea value={draft.notes} onChange={event => setDraft({ ...draft, notes: event.target.value })} /></label>
     </div>
 
-    <div className="cwp-operation-grid">
-      <section className="cwp-operation-section">
-        <header>
-          <Radio size={15} />
-          <div><strong>Rádios registrados</strong><small>qualquer rádio cadastrado pode ser ativado</small></div>
-        </header>
-        <div className="cwp-radio-list">
-          {radios.map(radio => {
-            const active = currentActiveRadioIds.includes(radio.id)
-            return <button type="button" key={radio.id} className={active ? 'active' : ''} onClick={() => setRadioActive(radio.id, !active)}>
-              <span><i />{radio.label}</span>
-              <small>{active ? 'ativo' : 'disponível'}</small>
-            </button>
-          })}
-        </div>
-        <footer>{mode === 'simulation' ? 'Ativação pronta para persistência via GET_PARAMETERS.' : 'Estado operacional do CWP.'}</footer>
+    <div className="cwp-full-services">
+      <section>
+        <header><strong>Rádios do CWP</strong><span>{radios.length}</span></header>
+        <div>{radios.map(service => <article key={service.id}><strong>{service.label}</strong><code>{service.endpoint}</code></article>)}</div>
       </section>
-
-      <section className="cwp-operation-section">
-        <header>
-          <Phone size={15} />
-          <div><strong>Telefonia</strong><small>ramais ficam disponíveis sem GET_PARAMETERS</small></div>
-        </header>
-        <div className="cwp-phone-list">
-          {telephones.map(telephone =>
-            <button type="button" key={telephone.id} onClick={() => setDialerSource(telephone)}>
-              <span><i />{telephone.label}</span>
-              <small>abrir discador</small>
-            </button>
-          )}
-        </div>
-        <footer>Selecione um telefone para chamar outro ramal cadastrado.</footer>
+      <section>
+        <header><strong>Ramais do CWP</strong><span>{telephones.length}</span></header>
+        <div>{telephones.map(service => <article key={service.id}><strong>{service.label}</strong><code>{service.endpoint}</code></article>)}</div>
       </section>
     </div>
 
-    {expanded && showDetails && <div className="cwp-config-panel">
-      <div className="config-grid">
-        <label>Console IP<input value={config.consoleIp} readOnly /></label>
-        <label>Rádios ativos<input value={currentActiveRadioIds.length} readOnly /></label>
-        <label>Ramais disponíveis<input value={telephones.length} readOnly /></label>
-        <label>Perfil<input value={mode === 'capture' ? 'Captura Real' : 'Simulação de Teste'} readOnly /></label>
-      </div>
-      <label className="config-note">Observações<textarea value={config.notes} readOnly /></label>
-      {showConfigActions && <div className="config-actions">
-        <button type="button"><Wrench size={16} />Editar configuração</button>
-        <button type="button"><FileText size={16} />Ver serviços</button>
-      </div>}
-    </div>}
-
-    {dialerSource && <div className="rep-modal-backdrop" role="presentation" onMouseDown={() => setDialerSource(null)}>
-      <div className="telephone-dialer-modal" role="dialog" aria-modal="true" aria-label={'Discador ' + dialerSource.label} onMouseDown={event => event.stopPropagation()}>
-        <TelephoneDialer source={dialerSource} telephones={telephones} onClose={() => setDialerSource(null)} />
-      </div>
-    </div>}
-  </article>
+    {(onSave || onCancel) && <footer className="cwp-full-actions">
+      {onCancel && <button type="button" onClick={onCancel}>Cancelar</button>}
+      {onSave && <button type="button" className="rep-cwp-save-button" onClick={() => onSave(draft)}><Save size={15} />Salvar configuração</button>}
+    </footer>}
+  </section>
 }
