@@ -30,6 +30,7 @@
 /* mxfalaw.c uses edit_rate 10/1: one structural A-law edit unit per 100 ms. */
 #define SHARED_MXF_AUDIO_EDIT_UNIT_MS 100
 #define SHARED_MXF_AUDIO_EDIT_UNIT_NS ((guint64)SHARED_MXF_AUDIO_EDIT_UNIT_MS * GST_MSECOND)
+#define SHARED_MXF_AUDIO_SAMPLES_PER_EDIT_UNIT 800ULL
 
 typedef struct RecorderHost RecorderHost;
 typedef struct RecorderSession RecorderSession;
@@ -88,6 +89,7 @@ struct RecorderSession {
     unsigned long long rtp_packets_late;
     unsigned long long rtp_payload_bytes_recorded;
     unsigned long long media_samples_written;
+    unsigned long long shared_samples_queued;
     guint64 shared_timeline_position_ns;
     unsigned long long rtp_sequence_gap_packets;
     unsigned long long rtp_timestamp_discontinuities;
@@ -1562,8 +1564,108 @@ static int push_shared_gap_buffer(RecorderSession *session, guint64 target_ns) {
         gst_buffer_unref(gap);
         if (flow != GST_FLOW_OK) return 0;
 
+        session->shared_samples_queued += SHARED_MXF_AUDIO_SAMPLES_PER_EDIT_UNIT;
         start_ns += SHARED_MXF_AUDIO_EDIT_UNIT_NS;
         session->shared_timeline_position_ns = start_ns;
+    }
+    return 1;
+}
+
+static int push_shared_structural_samples(
+    RecorderSession *session,
+    unsigned long long sample_count
+) {
+    while (sample_count > 0) {
+        unsigned long long chunk =
+            sample_count > SHARED_MXF_AUDIO_SAMPLES_PER_EDIT_UNIT
+                ? SHARED_MXF_AUDIO_SAMPLES_PER_EDIT_UNIT
+                : sample_count;
+        GstBuffer *gap = gst_buffer_new();
+        GstFlowReturn flow = GST_FLOW_ERROR;
+        guint64 duration_ns;
+
+        if (!session || !session->appsrc || !session->shared_group || !gap)
+            return 0;
+
+        duration_ns = gst_util_uint64_scale(
+            (guint64)chunk, GST_SECOND, 8000);
+
+        GST_BUFFER_PTS(gap) = session->shared_timeline_position_ns;
+        GST_BUFFER_DTS(gap) = GST_CLOCK_TIME_NONE;
+        GST_BUFFER_DURATION(gap) = duration_ns;
+        GST_BUFFER_FLAG_SET(gap, GST_BUFFER_FLAG_GAP);
+        GST_BUFFER_FLAG_SET(gap, GST_BUFFER_FLAG_DROPPABLE);
+
+        g_signal_emit_by_name(session->appsrc, "push-buffer", gap, &flow);
+        gst_buffer_unref(gap);
+        if (flow != GST_FLOW_OK) return 0;
+
+        session->shared_samples_queued += chunk;
+        session->shared_timeline_position_ns += duration_ns;
+        sample_count -= chunk;
+    }
+    return 1;
+}
+
+static int align_shared_group_tail(SharedMuxGroup *group) {
+    unsigned long long target_samples = 0;
+    unsigned long long edit_units;
+    int i;
+    char detail[512];
+
+    if (!group || !group->host || group->finalized) return 1;
+
+    for (i = 0; i < group->session_count; i++) {
+        RecorderSession *session =
+            &group->host->sessions[group->session_indices[i]];
+        if (session->shared_samples_queued > target_samples)
+            target_samples = session->shared_samples_queued;
+    }
+
+    if (target_samples == 0) return 1;
+
+    edit_units =
+        (target_samples + SHARED_MXF_AUDIO_SAMPLES_PER_EDIT_UNIT - 1) /
+        SHARED_MXF_AUDIO_SAMPLES_PER_EDIT_UNIT;
+    target_samples = edit_units * SHARED_MXF_AUDIO_SAMPLES_PER_EDIT_UNIT;
+
+    for (i = 0; i < group->session_count; i++) {
+        RecorderSession *session =
+            &group->host->sessions[group->session_indices[i]];
+        unsigned long long missing;
+
+        if (session->finalized) continue;
+        if (session->shared_samples_queued > target_samples) {
+            audit_event(group->host, session, "INTEGRITY_FAILURE",
+                "Shared MXF sample counter exceeded common close target");
+            return 0;
+        }
+
+        missing = target_samples - session->shared_samples_queued;
+        if (missing > 0 &&
+            !push_shared_structural_samples(session, missing)) {
+            audit_event(group->host, session, "INTEGRITY_FAILURE",
+                "Could not align shared-MXF tail with structural A-law padding");
+            return 0;
+        }
+    }
+
+    snprintf(detail, sizeof(detail),
+        "category=%s target_samples=%llu edit_units=%llu tracks=%d",
+        group->category,
+        target_samples,
+        edit_units,
+        group->session_count);
+    audit_event(group->host, NULL, "SHARED_MXF_TAIL_ALIGNED", detail);
+    return 1;
+}
+
+static int align_all_shared_group_tails(RecorderHost *host) {
+    int g;
+    if (!host || !host->cfg.shared_mxf_by_output) return 1;
+    for (g = 0; g < host->shared_group_count; g++) {
+        if (!align_shared_group_tail(&host->shared_groups[g]))
+            return 0;
     }
     return 1;
 }
@@ -1649,6 +1751,7 @@ static int push_rtp_payload(RecorderSession *session, const unsigned char *paylo
 
     if (flow == GST_FLOW_OK && session->shared_group) {
         session->media_samples_written += (unsigned long long)payload_len;
+        session->shared_samples_queued += (unsigned long long)payload_len;
         session->shared_timeline_position_ns = end_ns;
     }
     return flow == GST_FLOW_OK;
@@ -1987,6 +2090,12 @@ static int run_server(RecorderHost *host) {
             timeout_finalization_started = 1;
             audit_event(host, NULL, "SHUTDOWN_REQUESTED",
                 "External shutdown requested; gracefully finalizing every active recorder route");
+            if (host->cfg.shared_mxf_by_output &&
+                !align_all_shared_group_tails(host)) {
+                audit_event(host, NULL, "INTEGRITY_FAILURE",
+                    "Could not align shared-MXF tracks before external shutdown");
+                host->server_failed = 1;
+            }
             for (i = 0; i < host->session_count; i++) {
                 if (!host->sessions[i].finalized && host->sessions[i].finalize_state == 0) {
                     begin_finalize_session(&host->sessions[i],
@@ -2004,6 +2113,11 @@ static int run_server(RecorderHost *host) {
                     "Topology revision changed current=%llu requested=%llu; closing shared MXF window",
                     host->cfg.topology_revision, requested_revision);
                 audit_event(host, NULL, "TOPOLOGY_CHANGE_ROTATION", detail);
+                if (!align_all_shared_group_tails(host)) {
+                    audit_event(host, NULL, "INTEGRITY_FAILURE",
+                        "Could not align shared-MXF tracks before topology rotation");
+                    host->server_failed = 1;
+                }
                 for (i = 0; i < host->session_count; i++) {
                     if (!host->sessions[i].finalized && host->sessions[i].finalize_state == 0) {
                         begin_finalize_session(&host->sessions[i], "Topology change requested shared MXF rollover");
@@ -2018,6 +2132,12 @@ static int run_server(RecorderHost *host) {
                 host->cfg.shared_mxf_by_output
                     ? "Scheduled shared-MXF window boundary reached; remaining routes queued for normal finalization"
                     : "Recorder host max-seconds timeout reached; remaining routes queued for finalization");
+            if (host->cfg.shared_mxf_by_output &&
+                !align_all_shared_group_tails(host)) {
+                audit_event(host, NULL, "INTEGRITY_FAILURE",
+                    "Could not align shared-MXF tracks before scheduled close");
+                host->server_failed = 1;
+            }
             for (i = 0; i < host->session_count; i++) {
                 if (!host->sessions[i].finalized && host->sessions[i].finalize_state == 0) {
                     begin_finalize_session(&host->sessions[i],
@@ -2054,16 +2174,16 @@ static void print_summaries(RecorderHost *host) {
         received += s->rtp_packets_received;
         recorded += s->rtp_packets_recorded;
         ignored += s->rtp_packets_ignored_not_recording;
-        g_print("RECORDER SESSION SUMMARY route=%s session=%s packets_received=%llu packets_recorded=%llu payload_bytes=%llu sequence_gap_packets=%llu duplicates=%llu out_of_order=%llu malformed=%llu wrong_pt=%llu timestamp_discontinuities=%llu timestamp_gap_samples=%llu mux_bytes=%llu final=%s record_commands=%u pause_commands=%u keepalives=%u media_intervals_started=%u media_intervals_closed=%u packets_ignored_not_recording=%llu teardown=%d window_open_count=%d windows_closed_complete=%d rotations_completed=%d segment_sequence=%u\n",
+        g_print("RECORDER SESSION SUMMARY route=%s session=%s packets_received=%llu packets_recorded=%llu payload_bytes=%llu shared_samples_queued=%llu sequence_gap_packets=%llu duplicates=%llu out_of_order=%llu malformed=%llu wrong_pt=%llu timestamp_discontinuities=%llu timestamp_gap_samples=%llu mux_bytes=%llu final=%s record_commands=%u pause_commands=%u keepalives=%u media_intervals_started=%u media_intervals_closed=%u packets_ignored_not_recording=%llu teardown=%d window_open_count=%d windows_closed_complete=%d rotations_completed=%d segment_sequence=%u\n",
             s->cfg.route_key, s->session_id, s->rtp_packets_received, s->rtp_packets_recorded, s->rtp_payload_bytes_recorded,
-            s->rtp_sequence_gap_packets, s->rtp_packets_duplicate, s->rtp_packets_out_of_order, s->rtp_packets_malformed,
+            s->shared_samples_queued, s->rtp_sequence_gap_packets, s->rtp_packets_duplicate, s->rtp_packets_out_of_order, s->rtp_packets_malformed,
             s->rtp_packets_wrong_payload_type, s->rtp_timestamp_discontinuities, s->rtp_timestamp_gap_samples,
             s->mux_bytes_written, s->final_ok ? "CLOSED_COMPLETE" : "RECOVERY_REQUIRED",
             s->record_commands, s->pause_commands, s->keepalive_requests, s->media_intervals_started, s->media_intervals_closed,
             s->rtp_packets_ignored_not_recording, s->teardown_received, s->window_open_count, s->windows_closed_complete, s->rotations_completed, s->cfg.segment_sequence);
         if (host->session_count == 1) {
             g_print("RECORDER SUMMARY packets_received=%llu packets_recorded=%llu payload_bytes=%llu sequence_gap_packets=%llu duplicates=%llu out_of_order=%llu malformed=%llu wrong_pt=%llu timestamp_discontinuities=%llu timestamp_gap_samples=%llu mux_bytes=%llu final=%s record_commands=%u pause_commands=%u keepalives=%u media_intervals_started=%u media_intervals_closed=%u packets_ignored_not_recording=%llu teardown=%d window_open_count=%d windows_closed_complete=%d rotations_completed=%d segment_sequence=%u\n",
-                s->rtp_packets_received, s->rtp_packets_recorded, s->rtp_payload_bytes_recorded, s->rtp_sequence_gap_packets,
+                s->rtp_packets_received, s->rtp_packets_recorded, s->rtp_payload_bytes_recorded, s->shared_samples_queued, s->rtp_sequence_gap_packets,
                 s->rtp_packets_duplicate, s->rtp_packets_out_of_order, s->rtp_packets_malformed, s->rtp_packets_wrong_payload_type,
                 s->rtp_timestamp_discontinuities, s->rtp_timestamp_gap_samples, s->mux_bytes_written,
                 s->final_ok ? "CLOSED_COMPLETE" : "RECOVERY_REQUIRED", s->record_commands, s->pause_commands, s->keepalive_requests,
