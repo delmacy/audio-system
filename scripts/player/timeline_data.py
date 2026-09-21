@@ -91,13 +91,28 @@ def index_intervals(day: str) -> list[dict]:
 
 def _operational_track_intervals(run: Path, track_state: dict, events: list[dict], ordinal: int) -> list[dict]:
     mxf = Path(track_state["final_mxf"]).resolve()
-    if mxf.parent != run.resolve() or mxf.suffix.lower() != ".mxf" or not mxf.is_file():
+    allowed = (
+        mxf.parent == run.resolve()
+        or mxf.is_relative_to((ROOT / "recordings").resolve())
+    )
+    if not allowed or mxf.suffix.lower() != ".mxf" or not mxf.is_file():
         return []
     track = track_state["logical_track_uuid"]
     instance = track_state["track_instance_uuid"]
     matching = [e for e in events if e.get("logical_track_uuid") == track and e.get("track_instance_uuid") == instance]
     kinds = {e.get("event") for e in matching}
-    if not {"WINDOW_CLOSED_COMPLETE", "MEDIA_COMMIT"}.issubset(kinds):
+    classic_closed = {"WINDOW_CLOSED_COMPLETE", "MEDIA_COMMIT"}.issubset(kinds)
+    file_id = str(track_state.get("file_id") or "")
+    category = str(track_state.get("category") or "")
+    shared_closed = any(
+        event.get("event") == "SHARED_MXF_CLOSED_COMPLETE"
+        and (
+            (file_id and f"file_id={file_id}" in str(event.get("detail") or ""))
+            or (category and f"category={category}" in str(event.get("detail") or ""))
+        )
+        for event in events
+    )
+    if not classic_closed and not shared_closed:
         return []
     opened = None
     items = []
@@ -117,6 +132,9 @@ def _operational_track_intervals(run: Path, track_state: dict, events: list[dict
                     "run_id": run.name,
                     "mxf_name": mxf.name,
                     "track_index": int(track_state.get("track_index", ordinal)),
+                    "track_role": track_state.get("role"),
+                    "slot_index": track_state.get("slot_index"),
+                    "category": track_state.get("category"),
                     "source": "closed_mxf_recorder_audit_unindexed",
                 })
             opened = None

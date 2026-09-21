@@ -9,11 +9,14 @@ from urllib.parse import parse_qs, urlparse
 from playback_data import build_operational_plan, render_operational_wav
 from timeline_data import build_timeline
 from recorder_status import build_recorder_status
+from recorder_index import initialize as initialize_recorder_index
 from recording_layout import get_recorder_settings, recording_layout_snapshot, update_recorder_settings
 from config_store import configuration_snapshot, create_cwp, create_gateway, create_service, delete_cwp, delete_gateway, delete_service, get_network_config, list_cwps, list_gateways, list_services, next_cwp_ip, renew_cwp_ips, update_cwp, update_gateway, update_network_config, update_service
 
 HOST = "127.0.0.1"
 PORT = 8500
+
+initialize_recorder_index()
 
 
 class Handler(BaseHTTPRequestHandler):
