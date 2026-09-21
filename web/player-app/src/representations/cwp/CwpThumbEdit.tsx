@@ -39,7 +39,6 @@ export function CwpThumbEdit({ cwp, mode, onSave }: {
     <button type="button" className="rep-cwp-thumb rep-cwp-thumb-trigger rep-cwp-thumb-edit-trigger" onClick={() => setOpen(true)}>
       <span className="rep-thumb-icon edit"><Monitor size={22} /></span>
       <strong>{cwp.label}</strong>
-      <small className="rep-cwp-thumb-ip">{config.consoleIp}</small>
       <small>Configuração · não operacional</small>
       <span>Editar campos</span>
     </button>

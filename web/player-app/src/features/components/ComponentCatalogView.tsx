@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useState } from 'react'
 import { Activity, ClipboardList, Database, Radio } from 'lucide-react'
 import { CwpFull, CwpListItem, CwpSummary, CwpThumb, CwpThumbEdit } from '@/representations/cwp'
 import { RadioFull, RadioSummary, RadioThumb, RadioThumbEdit } from '@/representations/radio'
@@ -13,7 +13,7 @@ import { BlockPrimitiveCatalogSection } from '@/features/components/BlockPrimiti
 import { ShadcnCatalogSection } from '@/features/components/ShadcnCatalogSection'
 import { FormPrimitiveCatalogSection } from '@/features/components/FormPrimitiveCatalogSection'
 import { TimelineCatalogSection } from '@/features/components/TimelineCatalogSection'
-import { SIM_CWPS, type ServiceConfig, type SimStatus, type SimulatorMode } from '@/features/simulator/model'
+import { SIM_CWPS, type SimStatus, type SimulatorMode } from '@/features/simulator/model'
 
 type CatalogTab = 'cwp' | 'radios' | 'telephones' | 'recorder' | 'sip' | 'player' | 'primitives' | 'fields' | 'timeline' | 'shadcn' | 'blocks' | 'elements'
 
@@ -42,23 +42,6 @@ export function ComponentCatalogView({ mode, status, events }: {
   const [catalogTab, setCatalogTab] = useState<CatalogTab>('cwp')
 
   const sample = SIM_CWPS[0]
-  const registeredRadios = useMemo<ServiceConfig[]>(() => {
-    const map = new Map<string, ServiceConfig>()
-    SIM_CWPS.flatMap(item => item[previewMode].services.filter(service => service.kind === 'RADIO'))
-      .forEach(service => map.set(service.label, service))
-    return Array.from(map.values())
-  }, [previewMode])
-  const registeredTelephones = useMemo<ServiceConfig[]>(() => {
-    const map = new Map<string, ServiceConfig>()
-    SIM_CWPS.flatMap(item => item[previewMode].services.filter(service => service.kind === 'TEL'))
-      .forEach(service => map.set(service.label, service))
-    return Array.from(map.values())
-  }, [previewMode])
-  const [activeRadioIds, setActiveRadioIds] = useState<string[]>(
-    sample[previewMode].services
-      .filter(service => service.kind === 'RADIO' && service.status === 'active')
-      .map(service => service.id),
-  )
   const sampleRadio = sample[previewMode].services.find(service => service.kind === 'RADIO')!
   const sampleTel = sample[previewMode].services.find(service => service.kind === 'TEL')!
 
@@ -103,16 +86,13 @@ export function ComponentCatalogView({ mode, status, events }: {
         <div className="rep-showcase-stack">
           <CwpSummary cwp={cwpSummary} mode={previewMode} />
           <div className="rep-thumb-row">
-            <CwpThumb cwp={cwpThumb} mode={previewMode} registeredRadios={registeredRadios} registeredTelephones={registeredTelephones}
-              activeRadioIds={activeRadioIds} onActiveRadioIdsChange={setActiveRadioIds} />
+            <CwpThumb cwp={cwpThumb} mode={previewMode} />
             <CwpThumbEdit cwp={cwpThumbEdit} mode={previewMode} />
           </div>
           <CwpListItem cwp={cwpListItem} mode={previewMode} />
           <div className="catalog-isolated medium">
             <CwpFull cwp={cwpFull} mode={previewMode} expanded={expanded.includes(sample.id)}
-              onToggle={() => setExpanded(expanded.includes(sample.id) ? [] : [sample.id])}
-              registeredRadios={registeredRadios} registeredTelephones={registeredTelephones}
-              activeRadioIds={activeRadioIds} onActiveRadioIdsChange={setActiveRadioIds} />
+              onToggle={() => setExpanded(expanded.includes(sample.id) ? [] : [sample.id])} />
           </div>
         </div>
       </section>}
