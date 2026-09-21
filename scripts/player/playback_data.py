@@ -107,6 +107,20 @@ def _media_intervals(matching: list[dict], confirmed_end: datetime | None = None
     return intervals
 
 
+def _timeline_origin_from_events(matching: list[dict]) -> datetime | None:
+    for event in matching:
+        if event.get("event") != "MXF_TIMELINE_ORIGIN":
+            continue
+        raw = str(event.get("detail") or "").strip()
+        if not raw:
+            continue
+        try:
+            return parse_utc(raw)
+        except ValueError:
+            continue
+    return None
+
+
 def _range_overlaps(start: datetime, end: datetime, from_utc: str | None, to_utc: str | None) -> bool:
     requested_start = parse_utc(from_utc) if from_utc else start
     requested_end = parse_utc(to_utc) if to_utc else end
@@ -151,6 +165,7 @@ def _load_growing_candidate(run: Path, track: dict, events: list[dict],
             "open": True,
             "lock": lock,
             "window_start_utc": iso(timeline_origin),
+            "timeline_origin_utc": iso(timeline_origin),
             "confirmed_until_utc": iso(confirmed_end),
             "committed_position_ns": committed_position_ns,
             "flushed_bytes": flushed_bytes,
@@ -191,7 +206,15 @@ def _load_closed_candidate(run: Path, track: dict, events: list[dict],
     natural_end = parse_utc(intervals[-1]["end_utc"])
     if not _range_overlaps(natural_start, natural_end, from_utc, to_utc):
         return None
-    return {"run": run, "mxf": mxf, "track": track, "intervals": intervals, "open": False}
+    timeline_origin = _timeline_origin_from_events(matching)
+    return {
+        "run": run,
+        "mxf": mxf,
+        "track": track,
+        "intervals": intervals,
+        "open": False,
+        "timeline_origin_utc": iso(timeline_origin) if timeline_origin else None,
+    }
 
 
 def resolve_operational_track(
@@ -339,31 +362,23 @@ def _is_target_audio_klv(key: bytes, track_index: int) -> bool:
     )
 
 
-def _decode_growing_pcm(resolved: dict) -> bytes:
+def _decode_target_timeline_pcm(resolved: dict, limit: int) -> bytes:
     """
-    Decode only real A-law essence from the confirmed growing MXF prefix.
+    Decode the selected A-law essence as an MXF-relative PCM timeline.
 
-    Sparse zero-length KLVs are structural markers, not recorded silence. The
-    caller places the decoded media against recorder-audit UTC intervals, which
-    is the same presentation model used for finalized MXFs.
+    Every target essence KLV advances one 100 ms edit unit. Legacy zero-length
+    GAP KLVs become presentation zeros. New structural A-law filler is decoded
+    normally here, but it is removed later by recorder-audit intervals, so
+    recorded silence inside a MEDIA interval remains distinguishable from
+    container padding outside one.
     """
     target_track = int(resolved["track"].get("track_index", 0))
-    limit = int(resolved["flushed_bytes"])
-    required_samples = sum(
-        max(0, int(round(
-            (parse_utc(interval["end_utc"]) - parse_utc(interval["start_utc"])).total_seconds()
-            * SAMPLE_RATE
-        )))
-        for interval in resolved["intervals"]
-    )
-    if required_samples <= 0:
-        return b""
-
+    unit_pcm_bytes = SAMPLES_PER_EDIT_UNIT * BYTES_PER_SAMPLE
     output = bytearray()
-    decoded_samples = 0
+
     with Path(resolved["mxf"]).open("rb") as stream:
         offset = 0
-        while offset + 17 <= limit and decoded_samples < required_samples:
+        while offset + 17 <= limit:
             key = stream.read(16)
             if len(key) != 16:
                 break
@@ -386,18 +401,55 @@ def _decode_growing_pcm(resolved: dict) -> bytes:
                 break
             offset += value_length
 
-            # Zero-length essence KLV = structural GAP. It must not become
-            # evidence audio; UTC placement/silence is supplied by the audit.
-            if not payload:
-                continue
-
-            remaining = required_samples - decoded_samples
-            payload = payload[:remaining]
-            output.extend(b"".join(ALAW_PCM_BYTES[value] for value in payload))
-            decoded_samples += len(payload)
+            # A-law mapping is one 100 ms edit unit at 8 kHz mono. A short
+            # final edit unit is padded only for timeline addressing; audit
+            # intervals still determine what is exposed as recorded media.
+            payload = payload[:SAMPLES_PER_EDIT_UNIT]
+            unit = bytearray()
+            if payload:
+                unit.extend(b"".join(ALAW_PCM_BYTES[value] for value in payload))
+            if len(unit) < unit_pcm_bytes:
+                unit.extend(b"\x00" * (unit_pcm_bytes - len(unit)))
+            output.extend(unit[:unit_pcm_bytes])
 
     return bytes(output)
 
+
+def _compact_audited_media_pcm(resolved: dict, timeline_pcm: bytes) -> bytes:
+    origin_raw = resolved.get("timeline_origin_utc") or resolved.get("window_start_utc")
+    if not origin_raw:
+        raise ValueError("MXF timeline origin is required for sparse audited playback")
+    origin = parse_utc(str(origin_raw))
+    output = bytearray()
+
+    for interval in resolved["intervals"]:
+        a = parse_utc(interval["start_utc"])
+        z = parse_utc(interval["end_utc"])
+        if z <= a:
+            continue
+        start_ms = max(0.0, (a - origin).total_seconds() * 1000.0)
+        end_ms = max(start_ms, (z - origin).total_seconds() * 1000.0)
+        start_byte = int(round(start_ms * BYTES_PER_MS))
+        end_byte = int(round(end_ms * BYTES_PER_MS))
+        start_byte -= start_byte % BYTES_PER_SAMPLE
+        end_byte -= end_byte % BYTES_PER_SAMPLE
+        if start_byte >= len(timeline_pcm):
+            continue
+        output.extend(timeline_pcm[start_byte:min(end_byte, len(timeline_pcm))])
+
+    return bytes(output)
+
+
+def _decode_growing_pcm(resolved: dict) -> bytes:
+    """Decode only audit-confirmed media from the read-safe growing prefix."""
+    timeline = _decode_target_timeline_pcm(resolved, int(resolved["flushed_bytes"]))
+    return _compact_audited_media_pcm(resolved, timeline)
+
+
+def _decode_closed_audited_pcm(resolved: dict) -> bytes:
+    """Decode a finalized sparse MXF while excluding structural filler."""
+    timeline = _decode_target_timeline_pcm(resolved, Path(resolved["mxf"]).stat().st_size)
+    return _compact_audited_media_pcm(resolved, timeline)
 
 def _ffmpeg() -> str:
     command = shutil.which("ffmpeg")
@@ -458,7 +510,12 @@ def render_operational_wav(logical_track_uuid: str, from_utc: str | None = None,
         cache_path = CACHE / f"{cache_key}.wav"
         if cache_path.is_file():
             return plan, cache_path.read_bytes()
-        decoded = _decode_pcm(resolved["mxf"], int(resolved["track"].get("track_index", 0)))
+        if resolved.get("timeline_origin_utc"):
+            decoded = _decode_closed_audited_pcm(resolved)
+        else:
+            # Backward compatibility for finalized recordings created before
+            # MXF_TIMELINE_ORIGIN was persisted in recorder audit.
+            decoded = _decode_pcm(resolved["mxf"], int(resolved["track"].get("track_index", 0)))
 
     output = bytearray(total_bytes)
     source_cursor = 0
