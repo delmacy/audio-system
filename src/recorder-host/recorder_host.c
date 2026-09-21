@@ -27,6 +27,9 @@
 #define LIVE_COMMIT_INTERVAL_MS 1000
 #define LIVE_SAFETY_LAG_MS 1000
 #define LIVE_SAFETY_LAG_NS ((guint64)LIVE_SAFETY_LAG_MS * GST_MSECOND)
+/* mxfalaw.c uses edit_rate 10/1: one structural A-law edit unit per 100 ms. */
+#define SHARED_MXF_AUDIO_EDIT_UNIT_MS 100
+#define SHARED_MXF_AUDIO_EDIT_UNIT_NS ((guint64)SHARED_MXF_AUDIO_EDIT_UNIT_MS * GST_MSECOND)
 
 typedef struct RecorderHost RecorderHost;
 typedef struct RecorderSession RecorderSession;
@@ -1524,29 +1527,40 @@ static guint64 shared_group_now_ns(SharedMuxGroup *group) {
 }
 
 static int push_shared_gap_buffer(RecorderSession *session, guint64 target_ns) {
-    GstBuffer *gap;
-    GstFlowReturn flow = GST_FLOW_ERROR;
-    guint64 start_ns, duration_ns;
+    guint64 start_ns;
 
     if (!session || !session->appsrc || !session->shared_group) return 0;
     start_ns = session->shared_timeline_position_ns;
     if (target_ns <= start_ns) return 1;
 
-    duration_ns = target_ns - start_ns;
-    gap = gst_buffer_new();
-    if (!gap) return 0;
+    /*
+     * mxf_alaw_write_func maps every GAP buffer to exactly one zero-payload
+     * structural edit unit. Its A-law edit rate is 10/1 (100 ms), so never
+     * send an arbitrary-duration GAP here: doing so would make one KLV claim
+     * e.g. 20 ms of source time while pad->pos advances a full 100 ms.
+     *
+     * Accumulate sub-edit-unit wall-clock progress and emit only complete
+     * 100 ms units. Any remainder stays pending in shared_timeline_position_ns
+     * until later media/gap progress reaches the next structural boundary.
+     */
+    while (target_ns - start_ns >= SHARED_MXF_AUDIO_EDIT_UNIT_NS) {
+        GstBuffer *gap = gst_buffer_new();
+        GstFlowReturn flow = GST_FLOW_ERROR;
+        if (!gap) return 0;
 
-    GST_BUFFER_PTS(gap) = start_ns;
-    GST_BUFFER_DTS(gap) = GST_CLOCK_TIME_NONE;
-    GST_BUFFER_DURATION(gap) = duration_ns;
-    GST_BUFFER_FLAG_SET(gap, GST_BUFFER_FLAG_GAP);
-    GST_BUFFER_FLAG_SET(gap, GST_BUFFER_FLAG_DROPPABLE);
+        GST_BUFFER_PTS(gap) = start_ns;
+        GST_BUFFER_DTS(gap) = GST_CLOCK_TIME_NONE;
+        GST_BUFFER_DURATION(gap) = SHARED_MXF_AUDIO_EDIT_UNIT_NS;
+        GST_BUFFER_FLAG_SET(gap, GST_BUFFER_FLAG_GAP);
+        GST_BUFFER_FLAG_SET(gap, GST_BUFFER_FLAG_DROPPABLE);
 
-    g_signal_emit_by_name(session->appsrc, "push-buffer", gap, &flow);
-    gst_buffer_unref(gap);
+        g_signal_emit_by_name(session->appsrc, "push-buffer", gap, &flow);
+        gst_buffer_unref(gap);
+        if (flow != GST_FLOW_OK) return 0;
 
-    if (flow != GST_FLOW_OK) return 0;
-    session->shared_timeline_position_ns = target_ns;
+        start_ns += SHARED_MXF_AUDIO_EDIT_UNIT_NS;
+        session->shared_timeline_position_ns = start_ns;
+    }
     return 1;
 }
 
