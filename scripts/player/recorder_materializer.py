@@ -9,8 +9,8 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from config_store import list_cwps, list_services
-from recording_layout import ROOT, recording_window_paths
+from config_store import get_topology_revision, list_cwps, list_services
+from recording_layout import ROOT, recording_window_bounds, recording_window_paths
 
 IDENTITY_NAMESPACE = uuid.UUID("d7ca84d3-730d-42f6-87bb-fb5c7f9874e6")
 
@@ -109,7 +109,9 @@ def build_topology() -> dict:
     services = list_services()
     paths, segment_sequence = _window_targets()
     now = datetime.now(timezone.utc)
-    window_start = now.replace(minute=0, second=0, microsecond=0)
+    window_start_local, window_end_local = recording_window_bounds()
+    window_start = window_start_local.astimezone(timezone.utc)
+    window_end = window_end_local.astimezone(timezone.utc)
     file_ids = {
         kind: str(uuid.uuid5(IDENTITY_NAMESPACE, f"file|{Path(item['file']).as_posix()}"))
         for kind, item in paths.items()
@@ -139,20 +141,21 @@ def build_topology() -> dict:
             activity_signal="squ",
         ))
 
-    ringing = int(settings["telephone"]["ringing_slots_per_phone"])
     calling = int(settings["telephone"]["calling_slots_per_phone"])
+    ordered_cwps = sorted(cwps, key=lambda item: (item["side"], item["label"]))
     for service in sorted((item for item in services if item["kind"] == "TEL"), key=lambda item: item["label"]):
         number = _service_number(str(service["label"]))
-        for slot in range(1, ringing + 1):
+        for cwp_index, cwp in enumerate(ordered_cwps, start=1):
+            cwp_label = str(cwp["label"])
             tracks.append(_track(
                 category="telephone",
                 service_type="telephone",
                 service_id=number,
-                endpoint_id=str(service["label"]),
-                route_key=f"/record/telephone/{number}/ringing/{slot:02d}",
+                endpoint_id=cwp_label,
+                route_key=f"/record/telephone/{number}/received/{cwp_label}",
                 activity_signal="none",
-                role="ringing",
-                slot_index=slot,
+                role="received",
+                slot_index=cwp_index,
             ))
         for slot in range(1, calling + 1):
             tracks.append(_track(
@@ -183,6 +186,7 @@ def build_topology() -> dict:
             "lock": paths[kind]["lock"],
             "segment_sequence": segment_sequence,
             "recording_window_start_utc": _utc(window_start),
+            "recording_window_end_utc": _utc(window_end),
             "track_count": len(category_tracks),
         }
 
@@ -223,6 +227,9 @@ def build_topology() -> dict:
         "generated_utc": _utc(now),
         "segment_sequence": segment_sequence,
         "settings": settings,
+        "topology_revision": get_topology_revision(),
+        "window_start_utc": _utc(window_start),
+        "window_end_utc": _utc(window_end),
         "files": files,
         "tracks": tracks,
         "sessions": session_rows,
