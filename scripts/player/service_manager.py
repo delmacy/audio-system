@@ -8,6 +8,7 @@ import ctypes
 import json
 import os
 import socket
+import sqlite3
 import subprocess
 import sys
 import time
@@ -103,23 +104,42 @@ def _port_open(host: str, port: int, timeout: float = 0.15) -> bool:
 
 def _profile_ports() -> dict[str, tuple[str, int, str]]:
     result: dict[str, tuple[str, int, str]] = {}
-    if not PROFILE_PATH.is_file():
-        return result
-    parser = configparser.ConfigParser()
-    try:
-        parser.read(PROFILE_PATH, encoding="utf-8")
-        recorder_ip = parser.get("recorder", "ip", fallback="").strip()
-        recorder_port = parser.getint("recorder", "rtsp_port", fallback=0)
-        if recorder_ip and recorder_port:
-            result["recorder"] = (recorder_ip, recorder_port, "tcp")
+    if PROFILE_PATH.is_file():
+        parser = configparser.ConfigParser()
+        try:
+            parser.read(PROFILE_PATH, encoding="utf-8")
+            recorder_ip = parser.get("recorder", "ip", fallback="").strip()
+            recorder_port = parser.getint("recorder", "rtsp_port", fallback=0)
+            if recorder_ip and recorder_port:
+                result["recorder"] = (recorder_ip, recorder_port, "tcp")
 
-        proxy_ip = parser.get("sip", "proxy_ip", fallback="").strip()
-        proxy_port = parser.getint("sip", "proxy_port", fallback=0)
-        if proxy_ip and proxy_port:
-            # SIP may use TCP or UDP. Cleanup checks both transports.
-            result["rps"] = (proxy_ip, proxy_port, "both")
-    except (OSError, configparser.Error, ValueError):
-        pass
+            proxy_ip = parser.get("sip", "proxy_ip", fallback="").strip()
+            proxy_port = parser.getint("sip", "proxy_port", fallback=0)
+            if proxy_ip and proxy_port:
+                result["rps"] = (proxy_ip, proxy_port, "udp")
+        except (OSError, configparser.Error, ValueError):
+            pass
+
+    # The persistent RPS uses the configuration database as source of truth.
+    # Prefer it over the legacy profile when at least one enabled RPS exists.
+    db_path = ROOT / "data" / "audio-system.sqlite"
+    if db_path.is_file():
+        try:
+            con = sqlite3.connect(db_path)
+            row = con.execute(
+                """
+                SELECT ip,sip_port
+                FROM sip_gateway
+                WHERE enabled=1
+                ORDER BY label,id
+                LIMIT 1
+                """
+            ).fetchone()
+            con.close()
+            if row:
+                result["rps"] = (str(row[0]), int(row[1]), "udp")
+        except (sqlite3.Error, OSError, ValueError):
+            pass
     return result
 
 
@@ -418,8 +438,8 @@ def _service_command(name: str) -> tuple[list[str], Path]:
         ], ROOT
     if name == "rps":
         return [
-            "powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass",
-            "-File", str(ROOT / "scripts" / "gateway" / "Start-RpsRuntime.ps1"),
+            sys.executable,
+            str(ROOT / "scripts" / "gateway" / "rps_proxy.py"),
         ], ROOT
     if name == "simulator":
         return [
