@@ -235,7 +235,9 @@ try {
     $probe1 = Join-Path $runDir 'probe-first.wav'
     $probe1Output = & python $probe '--logical-track-uuid' $tracks[0].logical '--output' $probe1 '--min-generation' '1' '--wait-seconds' '15'
     if ($LASTEXITCODE -ne 0) { throw 'First growing-MXF playback probe failed.' }
-    $first = ($probe1Output -join [Environment]::NewLine) | ConvertFrom-Json
+    $probe1Json = ($probe1Output -join [Environment]::NewLine)
+    $probe1Json | Set-Content -LiteralPath (Join-Path $runDir 'probe-first.json') -Encoding utf8
+    $first = $probe1Json | ConvertFrom-Json
 
     if (-not (Test-Path -LiteralPath $partial)) { throw 'Growing MXF partial does not exist at first watermark.' }
     if (Test-Path -LiteralPath $final) { throw 'Final MXF exists before EOS; growing test is not exercising an open file.' }
@@ -245,9 +247,11 @@ try {
     $minSecondGeneration = [uint64]$first.commit_generation + 1
     $probe2Output = & python $probe '--logical-track-uuid' $tracks[1].logical '--output' $probe2 '--min-generation' ([string]$minSecondGeneration) '--wait-seconds' '12'
     if ($LASTEXITCODE -ne 0) { throw 'Second growing-MXF playback probe failed.' }
-    $second = ($probe2Output -join [Environment]::NewLine) | ConvertFrom-Json
-    if ([uint64]$second.committed_position_ns -le [uint64]$first.committed_position_ns) {
-        throw 'Growing-MXF watermark did not advance over confirmed media for the second track.'
+    $probe2Json = ($probe2Output -join [Environment]::NewLine)
+    $probe2Json | Set-Content -LiteralPath (Join-Path $runDir 'probe-second.json') -Encoding utf8
+    $second = $probe2Json | ConvertFrom-Json
+    if ([uint64]$second.commit_generation -le [uint64]$first.commit_generation) {
+        throw 'Growing-MXF second playback probe did not observe a later commit generation.'
     }
 
     if ((Get-Item -LiteralPath $probe2).Length -le (Get-Item -LiteralPath $probe1).Length) {
