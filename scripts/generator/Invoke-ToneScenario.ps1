@@ -51,27 +51,43 @@ $resolved = Get-Content -LiteralPath $resolvedPath -Raw | ConvertFrom-Json
 $recorderTracks = @($state.tracks)
 if ($recorderTracks.Count -le 0) { throw 'Recorder state contains no tracks.' }
 
+function Get-ObjectProperty {
+    param($Object,[string]$Name)
+    if ($null -eq $Object) { return $null }
+    $property = $Object.PSObject.Properties[$Name]
+    if ($null -eq $property) { return $null }
+    return $property.Value
+}
+
 function Find-RecorderTrack {
     param($Definition)
     $matches = @()
-    if ($Definition.logical_track_uuid) {
+    $logical = Get-ObjectProperty $Definition 'logical_track_uuid'
+    $routeSelector = Get-ObjectProperty $Definition 'route_key'
+    $trackIndex = Get-ObjectProperty $Definition 'track_index'
+    $category = Get-ObjectProperty $Definition 'category'
+    $endpoint = Get-ObjectProperty $Definition 'endpoint_id'
+    $service = Get-ObjectProperty $Definition 'service_id'
+
+    if ($logical) {
         $matches = @($recorderTracks | Where-Object {
-            [string]$_.logical_track_uuid -eq [string]$Definition.logical_track_uuid
+            [string](Get-ObjectProperty $_ 'logical_track_uuid') -eq [string]$logical
         })
-    } elseif ($Definition.route_key) {
+    } elseif ($routeSelector) {
         $matches = @($recorderTracks | Where-Object {
-            $route = if ($_.route_key) { [string]$_.route_key } elseif ($_.route) { [string]$_.route } else { '' }
-            $route -eq [string]$Definition.route_key
+            $route = Get-ObjectProperty $_ 'route_key'
+            if (-not $route) { $route = Get-ObjectProperty $_ 'route' }
+            [string]$route -eq [string]$routeSelector
         })
-    } elseif ($null -ne $Definition.track_index -and $Definition.category) {
+    } elseif ($null -ne $trackIndex -and $category) {
         $matches = @($recorderTracks | Where-Object {
-            [string]$_.category -eq [string]$Definition.category -and
-            [int]$_.track_index -eq [int]$Definition.track_index
+            [string](Get-ObjectProperty $_ 'category') -eq [string]$category -and
+            [int](Get-ObjectProperty $_ 'track_index') -eq [int]$trackIndex
         })
-    } elseif ($Definition.endpoint_id -and $Definition.service_id) {
+    } elseif ($endpoint -and $service) {
         $matches = @($recorderTracks | Where-Object {
-            [string]$_.endpoint_id -eq [string]$Definition.endpoint_id -and
-            [string]$_.service_id -eq [string]$Definition.service_id
+            [string](Get-ObjectProperty $_ 'endpoint_id') -eq [string]$endpoint -and
+            [string](Get-ObjectProperty $_ 'service_id') -eq [string]$service
         })
     } else {
         throw 'Each scenario track must select a recorder track by logical_track_uuid, route_key, category+track_index, or endpoint_id+service_id.'
@@ -88,7 +104,9 @@ $ordinal = 0
 
 foreach ($definition in @($resolved.tracks)) {
     $target = Find-RecorderTrack $definition
-    $routeKey = if ($target.route_key) { [string]$target.route_key } elseif ($target.route) { [string]$target.route } else { '' }
+    $routeKey = Get-ObjectProperty $target 'route_key'
+    if (-not $routeKey) { $routeKey = Get-ObjectProperty $target 'route' }
+    $routeKey = [string]$routeKey
     if (-not $routeKey) { throw 'Selected recorder track has no route key.' }
 
     $schedulePath = Join-Path $executionDir ('schedule-' + $ordinal + '.json')
@@ -104,17 +122,20 @@ foreach ($definition in @($resolved.tracks)) {
     $stdout = Join-Path $executionDir ('track-' + $ordinal + '-stdout.txt')
     $stderr = Join-Path $executionDir ('track-' + $ordinal + '-stderr.txt')
     $localRtpPort = 22000 + ($ordinal * 2)
-    $serviceType = if ($target.service_type) { [string]$target.service_type } elseif ($target.category) { [string]$target.category } else { 'radio' }
+    $serviceType = Get-ObjectProperty $target 'service_type'
+    if (-not $serviceType) { $serviceType = Get-ObjectProperty $target 'category' }
+    if (-not $serviceType) { $serviceType = 'radio' }
+    $serviceType = [string]$serviceType
 
     $args = @(
         '-NoProfile','-ExecutionPolicy','Bypass','-File',$simulator,
         '-LocalIp',$LocalIp,
         '-RecorderIp',$recorderIp,
         '-RtspPort',[string]$rtspPort,
-        '-RecorderRtpPort',[string]$target.rtp_port,
+        '-RecorderRtpPort',[string](Get-ObjectProperty $target 'rtp_port'),
         '-LocalRtpPort',[string]$localRtpPort,
-        '-EndpointId',[string]$target.endpoint_id,
-        '-ServiceId',[string]$target.service_id,
+        '-EndpointId',[string](Get-ObjectProperty $target 'endpoint_id'),
+        '-ServiceId',[string](Get-ObjectProperty $target 'service_id'),
         '-ServiceType',$serviceType,
         '-MediaFlow','mono',
         '-PausedProbePackets','0',
@@ -145,10 +166,12 @@ foreach ($item in $running) {
     $result = Complete-NativeProcessRedirected -Handle $item.handle -TimeoutMs $timeoutMs
     $ok = $result.ExitCode -eq 0 -and [string]$result.StdOut -match 'SERVICE MONO SIMULATOR: PASS'
     if (-not $ok) { $failures++ }
+    $reportedRoute = Get-ObjectProperty $item.target 'route_key'
+    if (-not $reportedRoute) { $reportedRoute = Get-ObjectProperty $item.target 'route' }
     $results += [ordered]@{
         ordinal=$item.ordinal
-        logical_track_uuid=[string]$item.target.logical_track_uuid
-        route_key=if ($item.target.route_key) { [string]$item.target.route_key } else { [string]$item.target.route }
+        logical_track_uuid=[string](Get-ObjectProperty $item.target 'logical_track_uuid')
+        route_key=[string]$reportedRoute
         mode=[string]$item.definition.mode
         frequency_hz=[double]$item.definition.frequency_hz
         start_offset_ms=[int]$item.definition.start_offset_ms
