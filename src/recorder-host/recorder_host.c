@@ -1979,12 +1979,18 @@ static int handle_rtsp_request(RecorderHost *host, ClientConnection *client, cha
         if (session->shared_group) {
             rearm_shared_route(session, "TEARDOWN released reusable shared-MXF route");
         } else if (host->cfg.event_files_mode) {
-            if (!session->event_last_event_utc[0])
-                storage_utc_now(session->event_last_event_utc,
-                    sizeof(session->event_last_event_utc));
-            request_event_file_close(session,
-                "TEARDOWN ended event leg", session->event_last_event_utc);
-            session->event_rearm_requested = 1;
+            if (session->event_file_open || session->event_materialize_requested ||
+                session->event_close_requested) {
+                if (!session->event_last_event_utc[0])
+                    storage_utc_now(session->event_last_event_utc,
+                        sizeof(session->event_last_event_utc));
+                request_event_file_close(session,
+                    "TEARDOWN ended event leg", session->event_last_event_utc);
+                session->event_rearm_requested = 1;
+            } else {
+                rearm_event_route(session,
+                    "TEARDOWN released already-finalized event route");
+            }
         } else {
             if (!begin_finalize_session(session, "TEARDOWN finalized only this session route")) host->server_failed = 1;
         }
