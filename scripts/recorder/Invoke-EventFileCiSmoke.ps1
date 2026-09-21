@@ -174,7 +174,16 @@ try {
             throw 'EVENT_FILE_OPEN missing media_start_utc.'
         }
         $mediaStart = [DateTimeOffset]::Parse([string]$open.media_start_utc)
-        $expectedDir = Join-Path $recordingRoot ($mediaStart.ToString('yyyy\MM\dd\HH') + '\' + $serviceId)
+        $expectedDir = $recordingRoot
+        foreach ($part in @(
+            $mediaStart.ToString('yyyy'),
+            $mediaStart.ToString('MM'),
+            $mediaStart.ToString('dd'),
+            $mediaStart.ToString('HH'),
+            $serviceId
+        )) {
+            $expectedDir = Join-Path $expectedDir $part
+        }
         if (-not (Test-Path -LiteralPath $expectedDir)) {
             throw "Time/service directory missing: $expectedDir"
         }
