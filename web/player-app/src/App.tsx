@@ -25,7 +25,7 @@ function App() {
   const [collapsed, setCollapsed] = useState(false)
 
   let content: React.ReactNode
-  if (activeView === 'services') content = <ServiceRegistryView mode="simulation" />
+  if (activeView === 'services') content = <ServiceRegistryView />
   else if (activeView === 'components') content = <ComponentCatalogView mode="simulation" status="stopped" events={CATALOG_EVENTS} />
   else if (activeView === 'simulator') content = <Placeholder title="Simulador" />
   else if (activeView === 'player') content = <Placeholder title="Player" />

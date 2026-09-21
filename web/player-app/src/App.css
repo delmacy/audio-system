@@ -1984,3 +1984,40 @@ button:focus-visible,input:focus-visible,select:focus-visible,[role=slider]:focu
   .registry-row{grid-template-columns:38px minmax(170px,1fr) 90px 42px}
   .registry-row-meta:nth-of-type(2),.registry-row-state{display:none}
 }
+
+
+.registry-api-state{
+  width:min(1180px,calc(100% - 48px));
+  margin:-10px auto 12px;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+  padding:9px 11px;
+  border:1px solid #cbdff4;
+  border-radius:8px;
+  background:#f1f7fe;
+  color:#456782;
+  font-size:9px;
+}
+.registry-api-state.error{border-color:#efc6c6;background:#fff4f4;color:#a43e3e}
+.registry-api-state button{
+  display:flex;align-items:center;gap:5px;border:1px solid currentColor;border-radius:6px;background:#fff;padding:5px 8px;color:inherit;font-size:8px;font-weight:700
+}
+.registry-inline-form label>small{
+  margin-top:-1px;
+  color:#8798a9;
+  font-size:7px;
+  font-weight:500;
+}
+.registry-ip-source{
+  width:max-content;
+  padding:3px 6px;
+  border-radius:999px;
+  background:#eef4fb;
+  color:#5d7186;
+  font-size:8px;
+  font-weight:750;
+}
+.registry-ip-source.auto{background:#e9f7ef;color:#278454}
+.registry-empty{padding:20px;text-align:center;color:#8091a2;font-size:10px}
