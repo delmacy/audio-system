@@ -2754,6 +2754,146 @@ static void cleanup_host(RecorderHost *host) {
     WSACleanup();
 }
 
+static int event_scale_selftest(int argc, char **argv) {
+    const char *v;
+    int legs = 1000;
+    int buffer_ms = 4000;
+    int max_admission_ms = 2000;
+    int frames_per_leg;
+    int i, frame_index;
+    unsigned char payload[160];
+    EventAudioBuffer *buffers;
+    ULONGLONG admission_started, admission_ms, fill_started, fill_ms;
+    unsigned long long buffered_bytes;
+
+    if ((v = arg_value(argc, argv, "--legs")) != NULL) legs = atoi(v);
+    if ((v = arg_value(argc, argv, "--buffer-ms")) != NULL) buffer_ms = atoi(v);
+    if ((v = arg_value(argc, argv, "--max-admission-ms")) != NULL)
+        max_admission_ms = atoi(v);
+
+    if (legs <= 0 || legs > MAX_SESSIONS || legs > MAX_CLIENTS) {
+        g_printerr(
+            "EVENT SCALE SELFTEST invalid legs=%d MAX_SESSIONS=%d MAX_CLIENTS=%d\n",
+            legs, MAX_SESSIONS, MAX_CLIENTS);
+        return 21;
+    }
+    if (buffer_ms < 20 || buffer_ms > 8000 || max_admission_ms <= 0) {
+        g_printerr(
+            "EVENT SCALE SELFTEST invalid buffer_ms=%d max_admission_ms=%d\n",
+            buffer_ms, max_admission_ms);
+        return 22;
+    }
+
+    frames_per_leg = (buffer_ms + 19) / 20;
+    if (frames_per_leg > EVENT_AUDIO_BUFFER_FRAMES ||
+        (unsigned long long)frames_per_leg * sizeof(payload) >
+            EVENT_AUDIO_BUFFER_BYTES) {
+        g_printerr(
+            "EVENT SCALE SELFTEST requested buffer exceeds per-leg capacity "
+            "frames=%d bytes=%llu capacity_frames=%d capacity_bytes=%d\n",
+            frames_per_leg,
+            (unsigned long long)frames_per_leg * sizeof(payload),
+            EVENT_AUDIO_BUFFER_FRAMES,
+            EVENT_AUDIO_BUFFER_BYTES);
+        return 23;
+    }
+
+    buffers = (EventAudioBuffer *)calloc((size_t)legs, sizeof(EventAudioBuffer));
+    if (!buffers) {
+        g_printerr("EVENT SCALE SELFTEST could not allocate leg table\n");
+        return 24;
+    }
+    memset(payload, 0xD5, sizeof(payload));
+    for (i = 0; i < legs; i++) event_audio_buffer_init(&buffers[i]);
+
+    admission_started = GetTickCount64();
+    for (i = 0; i < legs; i++) {
+        if (!event_audio_buffer_push(
+                &buffers[i],
+                payload,
+                sizeof(payload),
+                0,
+                "2026-09-21T20:00:00.123Z")) {
+            g_printerr(
+                "EVENT SCALE SELFTEST first-frame admission failed leg=%d\n", i);
+            for (frame_index = 0; frame_index < legs; frame_index++)
+                event_audio_buffer_free(&buffers[frame_index]);
+            free(buffers);
+            return 25;
+        }
+    }
+    admission_ms = GetTickCount64() - admission_started;
+
+    fill_started = GetTickCount64();
+    for (frame_index = 1; frame_index < frames_per_leg; frame_index++) {
+        guint32 ts = (guint32)(frame_index * 160);
+        for (i = 0; i < legs; i++) {
+            if (!event_audio_buffer_push(
+                    &buffers[i],
+                    payload,
+                    sizeof(payload),
+                    ts,
+                    "2026-09-21T20:00:00.123Z")) {
+                g_printerr(
+                    "EVENT SCALE SELFTEST buffer fill failed leg=%d frame=%d\n",
+                    i, frame_index);
+                for (frame_index = 0; frame_index < legs; frame_index++)
+                    event_audio_buffer_free(&buffers[frame_index]);
+                free(buffers);
+                return 26;
+            }
+        }
+    }
+    fill_ms = GetTickCount64() - fill_started;
+
+    for (i = 0; i < legs; i++) {
+        if (buffers[i].frame_count != (unsigned int)frames_per_leg ||
+            buffers[i].used != (size_t)frames_per_leg * sizeof(payload) ||
+            strcmp(buffers[i].first_ingress_utc,
+                "2026-09-21T20:00:00.123Z") != 0) {
+            g_printerr(
+                "EVENT SCALE SELFTEST integrity mismatch leg=%d "
+                "frames=%u used=%zu first_ingress=%s\n",
+                i, buffers[i].frame_count, buffers[i].used,
+                buffers[i].first_ingress_utc);
+            for (frame_index = 0; frame_index < legs; frame_index++)
+                event_audio_buffer_free(&buffers[frame_index]);
+            free(buffers);
+            return 27;
+        }
+    }
+
+    buffered_bytes =
+        (unsigned long long)legs * (unsigned long long)frames_per_leg *
+        (unsigned long long)sizeof(payload);
+
+    g_print(
+        "EVENT SCALE SELFTEST: legs=%d admission_ms=%llu "
+        "buffer_ms=%d frames_per_leg=%d buffered_bytes=%llu fill_ms=%llu "
+        "threshold_ms=%d\n",
+        legs,
+        (unsigned long long)admission_ms,
+        buffer_ms,
+        frames_per_leg,
+        buffered_bytes,
+        (unsigned long long)fill_ms,
+        max_admission_ms);
+
+    for (i = 0; i < legs; i++) event_audio_buffer_free(&buffers[i]);
+    free(buffers);
+
+    if (admission_ms > (ULONGLONG)max_admission_ms) {
+        g_printerr(
+            "EVENT SCALE SELFTEST admission latency exceeded threshold "
+            "actual_ms=%llu threshold_ms=%d\n",
+            (unsigned long long)admission_ms, max_admission_ms);
+        return 28;
+    }
+
+    g_print("EVENT SCALE SELFTEST: PASS\n");
+    return 0;
+}
+
 static int selftest(int argc, char **argv) {
     const char *dll = arg_value(argc, argv, "--plugin-dll");
     const char *required[] = {"appsrc", "appsink", NULL};
@@ -2788,6 +2928,9 @@ int main(int argc, char **argv) {
     for (i = 0; i < MAX_CLIENTS; i++) host.clients[i].socket = INVALID_SOCKET;
     for (i = 0; i < MAX_SESSIONS; i++) host.sessions[i].rtp_socket = INVALID_SOCKET;
     gst_init(&argc, &argv);
+    if (has_arg(argc, argv, "event-scale-selftest") ||
+        (argc > 1 && strcmp(argv[1], "event-scale-selftest") == 0))
+        return event_scale_selftest(argc, argv);
     if (has_arg(argc, argv, "selftest") || (argc > 1 && strcmp(argv[1], "selftest") == 0)) return selftest(argc, argv);
     if (!parse_host_config(argc, argv, &host)) {
         g_printerr("Usage multi: recorder-host --bind-ip IP --rtsp-port PORT --session-map sessions.tsv --audit audit.jsonl --plugin-dll gstmxfidentity.dll [--ready-file FILE] [--recorder-id ID] [--max-seconds N] [--rotate-window-after-pauses N --rotate-window-max-count N] [--shared-mxf-by-output | --event-files --recording-root DIR] [--topology-watch-file FILE --topology-revision N] [--shutdown-watch-file FILE]\n");
