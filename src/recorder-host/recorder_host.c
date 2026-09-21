@@ -81,6 +81,7 @@ struct RecorderSession {
     unsigned long long rtp_packets_out_of_order;
     unsigned long long rtp_packets_late;
     unsigned long long rtp_payload_bytes_recorded;
+    unsigned long long media_samples_written;
     unsigned long long rtp_sequence_gap_packets;
     unsigned long long rtp_timestamp_discontinuities;
     unsigned long long rtp_timestamp_gap_samples;
@@ -1262,6 +1263,25 @@ static int request_session_matches(RecorderSession *session, const char *request
     return strcmp(value, session->session_id) == 0;
 }
 
+static void rearm_shared_route(RecorderSession *session, const char *reason) {
+    if (!session || !session->shared_group) return;
+    session->announced = 0;
+    session->setup_done = 0;
+    session->recording = 0;
+    session->media_active = 0;
+    session->service_enabled = 0;
+    session->first_rtp_timestamp_valid = 0;
+    session->last_timestamp_valid = 0;
+    session->last_sequence_valid = 0;
+    session->last_payload_len = 0;
+    snprintf(session->session_id, sizeof(session->session_id), "P5-%lu-%02d-%llu",
+        (unsigned long)GetCurrentProcessId(),
+        (int)(session - session->host->sessions) + 1,
+        (unsigned long long)GetTickCount64());
+    audit_event(session->host, session, "ROUTE_REARMED",
+        reason ? reason : "Shared MXF route rearmed for another RTSP call inside the same recording window");
+}
+
 static int handle_rtsp_request(RecorderHost *host, ClientConnection *client, char *request) {
     char method[64] = {0}, uri[2048] = {0}, cseq[64] = {0}, detail[4096] = {0}, extra[1024] = {0};
     char *body = strstr(request, "\r\n\r\n");
@@ -1369,9 +1389,16 @@ static int handle_rtsp_request(RecorderHost *host, ClientConnection *client, cha
             session->service_enabled = 0;
         }
         session->teardown_received = 1;
-        audit_event(host, session, "TEARDOWN", "Graceful route-local RTSP teardown");
+        audit_event(host, session, "TEARDOWN",
+            session->shared_group
+                ? "Graceful RTSP teardown; shared MXF track remains armed and route will be reusable"
+                : "Graceful route-local RTSP teardown");
         send_rtsp_response(client->socket, 200, "OK", cseq, session->session_id, NULL);
-        if (!begin_finalize_session(session, "TEARDOWN finalized only this session route")) host->server_failed = 1;
+        if (session->shared_group) {
+            rearm_shared_route(session, "TEARDOWN released reusable shared-MXF route");
+        } else {
+            if (!begin_finalize_session(session, "TEARDOWN finalized only this session route")) host->server_failed = 1;
+        }
         client->close_after_response = 1;
         return 1;
     }
@@ -1390,10 +1417,15 @@ static int push_rtp_payload(RecorderSession *session, const unsigned char *paylo
     buffer = gst_buffer_new_allocate(NULL, payload_len, NULL);
     if (!buffer) return 0;
     gst_buffer_fill(buffer, 0, payload, payload_len);
-    GST_BUFFER_PTS(buffer) = gst_util_uint64_scale((guint64)delta, GST_SECOND, 8000);
+    if (session->shared_group) {
+        GST_BUFFER_PTS(buffer) = gst_util_uint64_scale((guint64)session->media_samples_written, GST_SECOND, 8000);
+    } else {
+        GST_BUFFER_PTS(buffer) = gst_util_uint64_scale((guint64)delta, GST_SECOND, 8000);
+    }
     GST_BUFFER_DTS(buffer) = GST_CLOCK_TIME_NONE;
     GST_BUFFER_DURATION(buffer) = gst_util_uint64_scale((guint64)payload_len, GST_SECOND, 8000);
     g_signal_emit_by_name(session->appsrc, "push-buffer", buffer, &flow);
+    if (flow == GST_FLOW_OK && session->shared_group) session->media_samples_written += (unsigned long long)payload_len;
     gst_buffer_unref(buffer);
     return flow == GST_FLOW_OK;
 }
@@ -1543,8 +1575,25 @@ static void close_client(RecorderHost *host, int index, int unexpected) {
     client->session = NULL;
     if (session && session->client_index == index) session->client_index = -1;
     if (unexpected && session && !session->finalized) {
-        abort_session(session, "RTSP TCP connection closed without TEARDOWN; route moved to recovery-required state");
-        host->server_failed = 1;
+        if (session->shared_group) {
+            if (session->media_active) {
+                audit_media_boundary(session, "MEDIA_END", "Unexpected RTSP disconnect closed active media interval");
+                session->media_active = 0;
+                session->media_intervals_closed++;
+            }
+            if (session->recording) audit_activity_signal(session, 0);
+            session->recording = 0;
+            if (session->service_enabled) {
+                audit_event(host, session, "SERVICE_DISABLED", "Unexpected RTSP disconnect released shared route");
+                session->service_enabled = 0;
+            }
+            audit_event(host, session, "CONNECTION_LOST",
+                "RTSP client disconnected; shared MXF route was rearmed without closing the category writer");
+            rearm_shared_route(session, "Unexpected disconnect released reusable shared-MXF route");
+        } else {
+            abort_session(session, "RTSP TCP connection closed without TEARDOWN; route moved to recovery-required state");
+            host->server_failed = 1;
+        }
     }
 }
 
