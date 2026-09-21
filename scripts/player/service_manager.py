@@ -489,22 +489,62 @@ def _kill_tree(pid: int) -> None:
 def stop_service(name: str) -> dict:
     if name not in SERVICE_ORDER:
         raise ValueError(f"Unknown service: {name}")
-    if name == "recorder":
-        stop_signal = ROOT / "runs" / "operational-recorder" / "stop.signal"
-        stop_signal.parent.mkdir(parents=True, exist_ok=True)
-        stop_signal.write_text(_utc_now() + "\n", encoding="utf-8")
+
     registry = _load_registry()
     services = registry["services"]
     current = services.get(name, {})
     pid = int(current.get("pid") or 0)
     managed = bool(current.get("managed"))
 
-    target_pid = pid
-    if name == "recorder" and not _pid_alive(target_pid):
-        target_pid = int(_current_recorder_pid() or 0)
+    if name == "recorder":
+        operational_dir = ROOT / "runs" / "operational-recorder"
+        operational_dir.mkdir(parents=True, exist_ok=True)
 
-    if target_pid and _pid_alive(target_pid):
-        if managed or name == "recorder":
+        # Prevent the PowerShell supervisor from opening another window after
+        # the current recorder-host exits.
+        stop_signal = operational_dir / "stop.signal"
+        stop_signal.write_text(_utc_now() + "\n", encoding="utf-8")
+
+        # Ask recorder-host itself to finish MEDIA_END/EOS and close the shared
+        # MXF writers. This is intentionally independent from RPS state.
+        shutdown_signal = operational_dir / "shutdown.signal"
+        shutdown_signal.write_text(_utc_now() + "\n", encoding="utf-8")
+
+        recorder_pid = int(_current_recorder_pid() or 0)
+        deadline = time.monotonic() + 10.0
+        while time.monotonic() < deadline:
+            host_alive = bool(recorder_pid and _pid_alive(recorder_pid))
+            endpoint_busy = not _wait_endpoints_free("recorder", timeout_seconds=0.05)
+            if not host_alive and not endpoint_busy:
+                break
+            time.sleep(0.15)
+
+        # Fallback only: if graceful shutdown was not enough, terminate the
+        # actual recorder-host and any process still owning the recorder RTSP port.
+        fallback_pids: set[int] = set()
+        if recorder_pid and _pid_alive(recorder_pid):
+            fallback_pids.add(recorder_pid)
+        fallback_pids.update(_windows_process_pids_by_name("recorder-host"))
+        for _host, port, protocol in _service_endpoints("recorder"):
+            fallback_pids.update(_windows_port_owner_pids(port, protocol))
+
+        for fallback_pid in sorted(fallback_pids):
+            if fallback_pid > 0 and fallback_pid != os.getpid() and _pid_alive(fallback_pid):
+                _kill_tree(fallback_pid)
+
+        # The supervisor should observe stop.signal and exit on its own. Kill it
+        # only if it remains after the recorder-host is already down.
+        supervisor_pid = pid
+        supervisor_deadline = time.monotonic() + 4.0
+        while supervisor_pid and _pid_alive(supervisor_pid) and time.monotonic() < supervisor_deadline:
+            time.sleep(0.1)
+        if supervisor_pid and _pid_alive(supervisor_pid):
+            _kill_tree(supervisor_pid)
+
+        _wait_endpoints_free("recorder", timeout_seconds=4.0)
+    else:
+        target_pid = pid
+        if target_pid and _pid_alive(target_pid) and managed:
             _kill_tree(target_pid)
             for _ in range(20):
                 if not _pid_alive(target_pid):
