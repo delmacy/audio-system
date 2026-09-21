@@ -2451,17 +2451,29 @@ static int accept_client(RecorderHost *host) {
 static void write_ready_file(RecorderHost *host) {
     FILE *fp;
     char now[64];
+    char e_now[128], e_bind_ip[128];
     int i;
     if (!host || !host->cfg.ready_file[0]) return;
     fp = fopen(host->cfg.ready_file, "wb");
     if (!fp) return;
     storage_utc_now(now, sizeof(now));
-    fprintf(fp, "{\n  \"ready\": true,\n  \"schema\": \"recorder-poc.multisession-ready.v1\",\n  \"ts_utc\": \"%s\",\n  \"bind_ip\": \"%s\",\n  \"rtsp_port\": %d,\n  \"session_count\": %d,\n  \"sessions\": [\n", now, host->cfg.bind_ip, host->cfg.rtsp_port, host->session_count);
+    json_escape(now, e_now, sizeof(e_now));
+    json_escape(host->cfg.bind_ip, e_bind_ip, sizeof(e_bind_ip));
+    fprintf(fp, "{\n  \"ready\": true,\n  \"schema\": \"recorder-poc.multisession-ready.v1\",\n  \"ts_utc\": \"%s\",\n  \"bind_ip\": \"%s\",\n  \"rtsp_port\": %d,\n  \"session_count\": %d,\n  \"sessions\": [\n",
+        e_now, e_bind_ip, host->cfg.rtsp_port, host->session_count);
     for (i = 0; i < host->session_count; i++) {
         RecorderSession *s = &host->sessions[i];
+        char e_route[1024], e_logical[256], e_instance[256];
+        char e_file[256], e_kind[128], e_output[8192];
+        json_escape(s->cfg.route_key, e_route, sizeof(e_route));
+        json_escape(s->cfg.logical_uuid, e_logical, sizeof(e_logical));
+        json_escape(s->cfg.instance_uuid, e_instance, sizeof(e_instance));
+        json_escape(s->cfg.file_id, e_file, sizeof(e_file));
+        json_escape(s->cfg.session_kind, e_kind, sizeof(e_kind));
+        json_escape(s->cfg.output_final, e_output, sizeof(e_output));
         fprintf(fp, "    {\"route_key\":\"%s\",\"rtp_port\":%d,\"logical_track_uuid\":\"%s\",\"track_instance_uuid\":\"%s\",\"file_id\":\"%s\",\"track_index\":%d,\"category\":\"%s\",\"output_final\":\"%s\"}%s\n",
-            s->cfg.route_key, s->cfg.rtp_port, s->cfg.logical_uuid, s->cfg.instance_uuid,
-            s->cfg.file_id, s->track_index, s->cfg.session_kind, s->cfg.output_final,
+            e_route, s->cfg.rtp_port, e_logical, e_instance,
+            e_file, s->track_index, e_kind, e_output,
             i + 1 == host->session_count ? "" : ",");
     }
     fprintf(fp, "  ]\n}\n");
