@@ -14,8 +14,30 @@ if (-not (Test-Path -LiteralPath $plugin)) { throw 'Plugin MXF de identidade aus
 $profile = Read-IniFile (Join-Path $root 'config\profiles\local-poc.ini')
 $ip = [string]$profile['recorder']['ip']
 $port = [int]$profile['recorder']['rtsp_port']
-if (Get-NetTCPConnection -LocalAddress $ip -LocalPort $port -State Listen -ErrorAction SilentlyContinue) {
-  throw "Porta RTSP $ip`:$port já está em uso."
+
+# Clean start: a stale recorder-host or a previous listener on the configured
+# RTSP port must never make a new recorder launch fail.
+$stalePids = @()
+$stalePids += @(Get-Process -Name 'recorder-host' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id)
+$stalePids += @(Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess)
+$stalePids = @($stalePids | Where-Object { $_ -and [int]$_ -gt 0 } | Sort-Object -Unique)
+
+foreach ($stalePid in $stalePids) {
+  Write-Host "PRE-FLIGHT: encerrando processo antigo PID=$stalePid antes de iniciar o gravador."
+  & taskkill.exe /PID ([string]$stalePid) /T /F 2>$null | Out-Null
+}
+
+$deadlinePort = [DateTime]::UtcNow.AddSeconds(8)
+do {
+  $occupied = @(Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue)
+  if ($occupied.Count -eq 0) { break }
+  Start-Sleep -Milliseconds 150
+} while ([DateTime]::UtcNow -lt $deadlinePort)
+
+$occupied = @(Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue)
+if ($occupied.Count -gt 0) {
+  $owners = ($occupied | Select-Object -ExpandProperty OwningProcess -Unique) -join ','
+  throw "Não foi possível liberar a porta RTSP $ip`:$port. PID(s): $owners"
 }
 
 $now = Get-Date
