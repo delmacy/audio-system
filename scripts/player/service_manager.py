@@ -141,7 +141,7 @@ def _windows_port_owner_pids(port: int, protocol: str = "tcp") -> set[int]:
     queries: list[str] = []
     if protocol in {"tcp", "both"}:
         queries.append(
-            f"Get-NetTCPConnection -LocalPort {int(port)} -ErrorAction SilentlyContinue "
+            f"Get-NetTCPConnection -LocalPort {int(port)} -State Listen -ErrorAction SilentlyContinue "
             "| Select-Object -ExpandProperty OwningProcess"
         )
     if protocol in {"udp", "both"}:
@@ -384,8 +384,14 @@ def _cleanup_service_before_start(name: str) -> dict[str, Any]:
             for host, port, protocol in _service_endpoints(name)
             if not _port_is_free(host, port, protocol)
         ]
+        listeners = {}
+        for _host, port, protocol in _service_endpoints(name):
+            owners = sorted(_windows_port_owner_pids(port, protocol))
+            if owners:
+                listeners[f"{_host}:{port}/{protocol}"] = owners
         raise RuntimeError(
-            f"Could not release required endpoints for {name}: {', '.join(occupied)}"
+            f"Could not release required endpoints for {name}: {', '.join(occupied)} "
+            f"listener_pids={listeners}"
         )
 
     registry = _load_registry()
