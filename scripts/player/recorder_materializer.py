@@ -193,6 +193,8 @@ def build_topology() -> dict:
         category_track_index[kind] += 1
         track["track_index"] = track_index
         track["file_id"] = file["file_id"]
+        track["final_mxf"] = file["path"]
+        track["mxf_name"] = Path(file["path"]).name
         track["rtp_port"] = rtp_port
         rtp_port += 1
         if rtp_port > 29999:
