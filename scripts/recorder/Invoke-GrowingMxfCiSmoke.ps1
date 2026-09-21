@@ -131,55 +131,6 @@ $recorderArgs = @(
 $recorder = Start-NativeProcessRedirected -FilePath $exe -Arguments $recorderArgs -StdOutPath $stdout -StdErrPath $stderr -WorkingDirectory $root
 
 try {
-        $origin = [DateTimeOffset]::Parse($originText)
-        [int64]$committedNs = [int64]$LockState.committed_position_ns
-        $confirmedEnd = $origin.AddTicks([int64]($committedNs / 100))
-    }
-    catch {
-        return $false
-    }
-
-    foreach ($line in @(Get-Content -LiteralPath $audit -ErrorAction SilentlyContinue)) {
-        if (-not $line) { continue }
-        try { $event = $line | ConvertFrom-Json } catch { continue }
-        if ([string]$event.logical_track_uuid -ne $LogicalTrackUuid) { continue }
-        if ([string]$event.event -ne 'MEDIA_START') { continue }
-        try { $mediaStart = [DateTimeOffset]::Parse([string]$event.ts_utc) } catch { continue }
-        if ($mediaStart -lt $confirmedEnd) { return $true }
-    }
-    return $false
-}
-
-function Wait-TrackConfirmedMedia {
-    param(
-        [Parameter(Mandatory=$true)][string]$LogicalTrackUuid,
-        [int]$TimeoutSeconds = 12,
-        [uint64]$MinGeneration = 0
-    )
-
-    $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
-    while ([DateTime]::UtcNow -lt $deadline) {
-        if ($recorder.Process.HasExited) {
-            throw "Recorder exited while waiting for confirmed media on $LogicalTrackUuid."
-        }
-        if (Test-Path -LiteralPath $lock) {
-            try {
-                $candidate = Get-Content -LiteralPath $lock -Raw | ConvertFrom-Json
-                if ($candidate.read_safe -and
-                    [uint64]$candidate.commit_generation -ge $MinGeneration -and
-                    [uint64]$candidate.committed_position_ns -gt 0 -and
-                    (Test-TrackHasConfirmedMedia -LockState $candidate -LogicalTrackUuid $LogicalTrackUuid)) {
-                    return $candidate
-                }
-            }
-            catch {}
-        }
-        Start-Sleep -Milliseconds 100
-    }
-    throw "Timed out waiting for audit-confirmed growing media on LogicalTrackUUID $LogicalTrackUuid."
-}
-
-try {
     $deadline = [DateTime]::UtcNow.AddSeconds(15)
     while (-not (Test-Path -LiteralPath $ready)) {
         if ($recorder.Process.HasExited) {
