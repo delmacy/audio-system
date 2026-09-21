@@ -80,6 +80,7 @@ jobs:
             './scripts/player/Invoke-MultiTrackToneTest.ps1',
             './scripts/recorder/Invoke-GrowingMxfCiSmoke.ps1',
             './scripts/recorder/Invoke-EventFileCiSmoke.ps1',
+            './scripts/recorder/Invoke-EventRouteCapacityCiSmoke.ps1',
             './scripts/recorder/Start-EventRecorderLab.ps1'
           )) {
             $tokens = $null
@@ -268,6 +269,10 @@ jobs:
         shell: pwsh
         run: ./scripts/recorder/Invoke-EventFileCiSmoke.ps1
 
+      - name: Event-file 1000-route admission
+        shell: pwsh
+        run: ./scripts/recorder/Invoke-EventRouteCapacityCiSmoke.ps1 -SessionCount 1000
+
       - name: Upload native E2E diagnostics
         if: failure()
         uses: actions/upload-artifact@v4
@@ -276,5 +281,6 @@ jobs:
           path: |
             runs/operational-recorder/**
             runs/event-recorder/**
+            runs/event-capacity/**
           if-no-files-found: ignore
           retention-days: 3
