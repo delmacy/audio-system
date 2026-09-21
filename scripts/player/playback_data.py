@@ -134,9 +134,9 @@ def _load_growing_candidate(run: Path, track: dict, events: list[dict],
         if not allowed or not partial.is_file():
             return None
         flushed_bytes = min(flushed_bytes, partial.stat().st_size)
-        window_start = parse_utc(str(lock["recording_window_start_utc"]))
-        confirmed_end = window_start + timedelta(microseconds=committed_position_ns / 1000)
-        if not _range_overlaps(window_start, confirmed_end, from_utc, to_utc):
+        timeline_origin = parse_utc(str(lock.get("timeline_origin_utc") or lock["recording_window_start_utc"]))
+        confirmed_end = timeline_origin + timedelta(microseconds=committed_position_ns / 1000)
+        if not _range_overlaps(timeline_origin, confirmed_end, from_utc, to_utc):
             return None
         matching = _matching_events(track, events)
         intervals = _media_intervals(matching, confirmed_end)
@@ -150,7 +150,7 @@ def _load_growing_candidate(run: Path, track: dict, events: list[dict],
             "intervals": intervals,
             "open": True,
             "lock": lock,
-            "window_start_utc": iso(window_start),
+            "window_start_utc": iso(timeline_origin),
             "confirmed_until_utc": iso(confirmed_end),
             "committed_position_ns": committed_position_ns,
             "flushed_bytes": flushed_bytes,
