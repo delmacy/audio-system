@@ -1511,6 +1511,20 @@ gst_mxf_mux_handle_buffer (GstMXFMux * mux, GstMXFMuxPad * pad)
   gst_buffer_unmap (outbuf, &map);
   outbuf = gst_buffer_append (outbuf, buf);
 
+  /*
+   * Recorder extension: annotate every complete essence KLV with the
+   * structural edit-unit position that it represents. The downstream
+   * StorageWriter uses this metadata only to publish a read-safe growing-MXF
+   * watermark; it does not alter the MXF bytes.
+   */
+  GST_BUFFER_PTS (outbuf) = pad->last_timestamp;
+  GST_BUFFER_DTS (outbuf) = GST_CLOCK_TIME_NONE;
+  GST_BUFFER_DURATION (outbuf) =
+      gst_util_uint64_scale (GST_SECOND, pad->source_track->edit_rate.d,
+      pad->source_track->edit_rate.n);
+  GST_BUFFER_OFFSET (outbuf) = pad->pos;
+  GST_BUFFER_OFFSET_END (outbuf) = pad->pos + 1;
+
   GST_DEBUG_OBJECT (pad,
       "Pushing buffer of size %" G_GSIZE_FORMAT " for track %u",
       gst_buffer_get_size (outbuf), pad->source_track->parent.track_id);
