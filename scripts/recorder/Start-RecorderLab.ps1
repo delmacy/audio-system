@@ -13,11 +13,18 @@ if (-not (Test-Path -LiteralPath $plugin)) { throw 'Plugin MXF de identidade aus
 $profile = Read-IniFile (Join-Path $root 'config\profiles\local-poc.ini')
 $ip = [string]$profile['recorder']['ip']; $port = [int]$profile['recorder']['rtsp_port']
 if (Get-NetTCPConnection -LocalAddress $ip -LocalPort $port -State Listen -ErrorAction SilentlyContinue) { throw "Porta RTSP $ip`:$port já está em uso." }
-$runDir = Join-Path $root ('runs\operational-recorder\' + (Get-Date -Format 'yyyyMMdd-HHmmssfff'))
+$now = Get-Date
+$runDir = Join-Path $root ('runs\operational-recorder\' + $now.ToString('yyyyMMdd-HHmmssfff'))
 New-Item -ItemType Directory -Force -Path $runDir | Out-Null
+
+$recordingDir = Join-Path $root ('recordings\{0}\{1}\{2}\radio' -f $now.ToString('yyyy'),$now.ToString('MM'),$now.ToString('dd'))
+New-Item -ItemType Directory -Force -Path $recordingDir | Out-Null
+$windowMinute = [int]([Math]::Floor($now.Minute / 60) * 60)
+$windowStamp = ('{0}-{1:00}{2:00}' -f $now.ToString('yyyyMMdd'),$now.Hour,$windowMinute)
+
 $endpoint = 'CWP-LAB-01'; $service = 'LAB-121500'; $rtp = 20500
 $identity = New-ServiceLogicalTrackIdentity -ServiceType radio -ServiceId $service -EndpointId $endpoint -MediaFlow mono
-$stem = Join-Path $runDir 'radio-lab-121500'
+$stem = Join-Path $recordingDir ('radio-' + $windowStamp)
 $partial = $stem + '.mxf.partial'; $final = $stem + '.mxf'; $lock = $stem + '.mxf.lock'
 $route = "/record/$endpoint/radio-$($service.ToLowerInvariant())-rx"
 $fields = @($route,$endpoint,$service,'mono','squ',[string]$identity.display_name,[string]$identity.logical_track_uuid,[string]$identity.track_instance_uuid,('OP-' + [Guid]::NewGuid().ToString()),$partial,$final,$lock,[string]$rtp,([DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:00:00.000Z')),'0','radio')
@@ -35,10 +42,11 @@ while (-not (Test-Path -LiteralPath $ready)) {
   if ([DateTime]::UtcNow -gt $deadline) { throw 'Recorder não atingiu READY em 15 segundos.' }
   Start-Sleep -Milliseconds 100
 }
-$state = [ordered]@{schema='recorder-poc.operational-recorder.v1';status='READY_IDLE';scope='single_direct_cwp_rtsp_rtp_session';started_utc=[DateTime]::UtcNow.ToString('o');pid=$proc.Id;run_dir=$runDir;rtsp_ip=$ip;rtsp_port=$port;rtp_port=$rtp;endpoint_id=$endpoint;service_id=$service;logical_track_uuid=$identity.logical_track_uuid;track_instance_uuid=$identity.track_instance_uuid;route=$route;partial_mxf=$partial;final_mxf=$final;ready_file=$ready;audit=$audit;max_seconds=$MaxSeconds;live_buffer_available=$false}
+$state = [ordered]@{schema='recorder-poc.operational-recorder.v2';status='READY_IDLE';scope='single_direct_cwp_rtsp_rtp_session';started_utc=[DateTime]::UtcNow.ToString('o');pid=$proc.Id;run_dir=$runDir;recording_root=(Join-Path $root 'recordings');recording_category='radio';rtsp_ip=$ip;rtsp_port=$port;rtp_port=$rtp;endpoint_id=$endpoint;service_id=$service;logical_track_uuid=$identity.logical_track_uuid;track_instance_uuid=$identity.track_instance_uuid;route=$route;partial_mxf=$partial;final_mxf=$final;ready_file=$ready;audit=$audit;max_seconds=$MaxSeconds;live_buffer_available=$false}
 $statePath = Join-Path $runDir 'operational-recorder-state.json'
 $state | ConvertTo-Json -Depth 7 | Set-Content -LiteralPath $statePath -Encoding utf8
 Set-Content -LiteralPath (Join-Path $root 'runs\operational-recorder\current-run.txt') -Value $runDir -Encoding utf8
 Write-Host "RECORDER READY_IDLE pid=$($proc.Id) RTSP=$ip`:$port RTP=$rtp"
 Write-Host "Route: $route"
+Write-Host "MXF: $final"
 Write-Host "State: $statePath"
