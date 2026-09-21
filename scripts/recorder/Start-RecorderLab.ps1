@@ -57,6 +57,10 @@ $windowEnd = [DateTimeOffset]::Parse([string]$manifest.window_end_utc)
 $secondsToBoundary = [Math]::Max(1,[int][Math]::Ceiling(($windowEnd - [DateTimeOffset]::UtcNow).TotalSeconds))
 $effectiveMaxSeconds = if ($MaxSeconds -gt 0) { [Math]::Min($MaxSeconds,$secondsToBoundary) } else { $secondsToBoundary }
 $topologySignal = Join-Path $root 'runs\operational-recorder\topology-change.signal'
+$shutdownSignal = Join-Path $root 'runs\operational-recorder\shutdown.signal'
+if (Test-Path -LiteralPath $shutdownSignal) {
+  Remove-Item -LiteralPath $shutdownSignal -Force -ErrorAction SilentlyContinue
+}
 
 $audit = Join-Path $runDir 'recorder-audit.jsonl'
 $ready = Join-Path $runDir 'recorder-ready.json'
@@ -74,7 +78,8 @@ $args = @(
   '--max-seconds',[string]$effectiveMaxSeconds,
   '--shared-mxf-by-output',
   '--topology-watch-file',$topologySignal,
-  '--topology-revision',[string]$manifest.topology_revision
+  '--topology-revision',[string]$manifest.topology_revision,
+  '--shutdown-watch-file',$shutdownSignal
 )
 
 $proc = Start-Process -FilePath $exe -ArgumentList (ConvertTo-NativeArgumentString $args) -WorkingDirectory $root -WindowStyle Hidden -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
@@ -116,6 +121,7 @@ $state = [ordered]@{
   topology_revision=[int]$manifest.topology_revision
   topology_change_guard_seconds=[int]$manifest.settings.topology_change_guard_seconds
   window_end_utc=[string]$manifest.window_end_utc
+  shutdown_signal=$shutdownSignal
   live_buffer_available=$false
 }
 $statePath = Join-Path $runDir 'operational-recorder-state.json'
