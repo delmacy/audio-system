@@ -27,6 +27,9 @@ def iso(value: datetime) -> str:
 
 
 def latest_index() -> Path | None:
+    operational = ROOT / "data" / "recorder-index.sqlite"
+    if operational.is_file():
+        return operational
     paths = sorted((ROOT / "runs" / "index").glob("temporal-index-*/recorder-index.sqlite"), reverse=True)
     return paths[0] if paths else None
 
@@ -56,9 +59,11 @@ def index_intervals(day: str) -> list[dict]:
         rows = con.execute("""
             SELECT mi.media_interval_id, mi.start_utc, mi.end_utc, mi.logical_track_uuid,
                    mi.track_instance_uuid, lt.service_type, lt.service_id, lt.endpoint_id,
-                   rf.relative_path, rf.state
+                   rf.relative_path, rf.state, ti.track_index, ti.track_role, ti.slot_index,
+                   rf.category
             FROM media_interval mi
             JOIN logical_track lt ON lt.logical_track_uuid=mi.logical_track_uuid
+            JOIN track_instance ti ON ti.track_instance_uuid=mi.track_instance_uuid
             JOIN recording_file rf ON rf.file_id=mi.file_id
             WHERE mi.start_utc < ? AND mi.end_utc > ? AND mi.state='CLOSED'
               AND rf.state='CLOSED_COMPLETE'
@@ -67,13 +72,20 @@ def index_intervals(day: str) -> list[dict]:
     result = []
     for row in rows:
         mxf = (ROOT / row["relative_path"]).resolve()
-        if not mxf.is_relative_to((ROOT / "runs").resolve()) or mxf.suffix.lower() != ".mxf" or not mxf.is_file():
+        allowed = (
+            mxf.is_relative_to((ROOT / "recordings").resolve())
+            or mxf.is_relative_to((ROOT / "runs").resolve())
+        )
+        if not allowed or mxf.suffix.lower() != ".mxf" or not mxf.is_file():
             continue
         result.append({"id": row["media_interval_id"], "start_utc": row["start_utc"],
                        "end_utc": row["end_utc"], "logical_track_uuid": row["logical_track_uuid"],
                        "track_instance_uuid": row["track_instance_uuid"],
                        "service_type": row["service_type"], "service_id": row["service_id"],
-                       "endpoint_id": row["endpoint_id"], "source": "sqlite_closed_mxf"})
+                       "endpoint_id": row["endpoint_id"], "mxf_name": mxf.name,
+                       "track_index": int(row["track_index"]),
+                       "track_role": row["track_role"], "slot_index": row["slot_index"],
+                       "category": row["category"], "source": "sqlite_closed_mxf"})
     return result
 
 
