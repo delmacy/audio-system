@@ -34,12 +34,12 @@ $tracks = @(
     [ordered]@{
         endpoint='CI-CWP-01'; service='121500'; route='/record/CI-CWP-01/radio-121500';
         rtp=20500; local_rtp=21500; logical=[Guid]::NewGuid().ToString(); instance=[Guid]::NewGuid().ToString();
-        track_index=0
+        track_index=0; tone_hz=440
     },
     [ordered]@{
         endpoint='CI-CWP-02'; service='118700'; route='/record/CI-CWP-02/radio-118700';
         rtp=20501; local_rtp=21501; logical=[Guid]::NewGuid().ToString(); instance=[Guid]::NewGuid().ToString();
-        track_index=1
+        track_index=1; tone_hz=660
     }
 )
 
@@ -137,7 +137,9 @@ try {
             '-BurstMs',[string]$MediaMs,
             '-SilenceMs','200',
             '-KeepaliveIntervalMs','100',
-            '-PausedProbePackets','0'
+            '-PausedProbePackets','0',
+            '-ToneHz',[string]$track.tone_hz,
+            '-ToneLevelDbfs','-12'
         )
         $handle = Start-NativeProcessRedirected -FilePath $powershell -Arguments $simArgs -StdOutPath $simOut -StdErrPath $simErr -WorkingDirectory $root
         $running += [pscustomobject]@{ track=$track; handle=$handle }
