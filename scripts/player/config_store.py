@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ipaddress
+import re
 import sqlite3
 import uuid
 from datetime import datetime, timezone
@@ -176,6 +177,19 @@ def initialize() -> None:
                 SET sip_uri=endpoint
                 WHERE sip_uri IS NULL AND endpoint LIKE 'sip:%'
             """)
+            rows = con.execute("""
+                SELECT id,label,gateway_id FROM service
+                WHERE gateway_id IS NOT NULL AND (sip_uri LIKE 'sip:%' OR endpoint LIKE 'sip:%')
+            """).fetchall()
+            for row in rows:
+                try:
+                    sip_uri, selected_gateway = _service_sip_uri(con, str(row["label"]), str(row["gateway_id"]))
+                    con.execute(
+                        "UPDATE service SET endpoint=?,sip_uri=?,gateway_id=? WHERE id=?",
+                        (sip_uri, sip_uri, selected_gateway, str(row["id"])),
+                    )
+                except ValueError:
+                    pass
 
 
 def _setting(con: sqlite3.Connection, key: str) -> str:
@@ -207,11 +221,26 @@ def _validate_ip(value: str) -> str:
     return str(parsed)
 
 
-def _validate_sip_uri(value: str) -> str:
-    value = value.strip()
-    if not value.lower().startswith(("sip:", "sips:")):
-        raise ValueError("Service URI must start with sip: or sips:")
+def _service_sip_user(label: str) -> str:
+    matches = re.findall(r"\d+(?:\.\d+)*", label)
+    if not matches:
+        raise ValueError("Service name must contain a ramal or frequency number")
+    value = re.sub(r"\D", "", matches[-1])
+    if not value:
+        raise ValueError("Could not derive SIP user from service name")
     return value
+
+
+def _service_sip_uri(con: sqlite3.Connection, label: str, gateway_id: str | None) -> tuple[str, str]:
+    selected_gateway = _validate_gateway_for_service(con, gateway_id)
+    row = con.execute(
+        "SELECT ip,sip_port FROM sip_gateway WHERE id=? AND enabled=1",
+        (selected_gateway,),
+    ).fetchone()
+    if not row:
+        raise ValueError("Selected RPS does not exist or is disabled")
+    sip_user = _service_sip_user(label)
+    return f"sip:{sip_user}@{row['ip']}:{int(row['sip_port'])}", selected_gateway
 
 
 def list_cwps() -> list[dict]:
@@ -421,20 +450,19 @@ def get_service(record_id: str) -> dict:
     return item
 
 
-def _validate_gateway_for_radio(con: sqlite3.Connection, gateway_id: str | None) -> str:
+def _validate_gateway_for_service(con: sqlite3.Connection, gateway_id: str | None) -> str:
     if not gateway_id:
-        raise ValueError("Radio service requires a SIP/RTSP gateway")
+        raise ValueError("Service requires an RPS (RTSP Proxy)")
     row = con.execute("SELECT id FROM sip_gateway WHERE id=? AND enabled=1", (gateway_id,)).fetchone()
     if not row:
-        raise ValueError("Selected gateway does not exist or is disabled")
+        raise ValueError("Selected RPS does not exist or is disabled")
     return str(row["id"])
 
 
-def create_service(kind: str, label: str, sip_uri: str, gateway_id: str | None = None) -> dict:
+def create_service(kind: str, label: str, gateway_id: str | None = None) -> dict:
     initialize()
     kind = kind.strip().upper()
     label = label.strip()
-    sip_uri = _validate_sip_uri(sip_uri)
     if kind not in {"RADIO", "TEL"}:
         raise ValueError("Service kind must be RADIO or TEL")
     if not label:
@@ -443,7 +471,7 @@ def create_service(kind: str, label: str, sip_uri: str, gateway_id: str | None =
     now = utc_now()
     try:
         with connect() as con:
-            selected_gateway = _validate_gateway_for_radio(con, gateway_id) if kind == "RADIO" else None
+            sip_uri, selected_gateway = _service_sip_uri(con, label, gateway_id)
             con.execute(
                 """
                 INSERT INTO service(id,kind,label,endpoint,sip_uri,gateway_id,enabled,created_at,updated_at)
@@ -456,11 +484,10 @@ def create_service(kind: str, label: str, sip_uri: str, gateway_id: str | None =
     return get_service(record_id)
 
 
-def update_service(record_id: str, kind: str, label: str, sip_uri: str, gateway_id: str | None = None) -> dict:
+def update_service(record_id: str, kind: str, label: str, gateway_id: str | None = None) -> dict:
     initialize()
     kind = kind.strip().upper()
     label = label.strip()
-    sip_uri = _validate_sip_uri(sip_uri)
     if kind not in {"RADIO", "TEL"}:
         raise ValueError("Service kind must be RADIO or TEL")
     if not label:
@@ -468,7 +495,7 @@ def update_service(record_id: str, kind: str, label: str, sip_uri: str, gateway_
     now = utc_now()
     try:
         with connect() as con:
-            selected_gateway = _validate_gateway_for_radio(con, gateway_id) if kind == "RADIO" else None
+            sip_uri, selected_gateway = _service_sip_uri(con, label, gateway_id)
             cursor = con.execute(
                 """
                 UPDATE service
