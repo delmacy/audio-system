@@ -113,11 +113,15 @@ int storage_writer_write_lock_state(StorageWriter *writer, const char *state, ch
         writer->commit_generation,
         writer->commit_lag_target_ms,
         writer->committed_position_ns > 0 ? "true" : "false");
-    if (fflush(fp) != 0 || fclose(fp) != 0) {
-        DeleteFileA(temp_path);
-        if (error_text && error_text_size) snprintf(error_text, error_text_size,
-            "Could not flush temporary lock sidecar: %s", temp_path);
-        return 0;
+    {
+        int flush_failed = fflush(fp) != 0;
+        int close_failed = fclose(fp) != 0;
+        if (flush_failed || close_failed) {
+            DeleteFileA(temp_path);
+            if (error_text && error_text_size) snprintf(error_text, error_text_size,
+                "Could not flush temporary lock sidecar: %s", temp_path);
+            return 0;
+        }
     }
     if (!MoveFileExA(temp_path, writer->lock_path,
             MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
