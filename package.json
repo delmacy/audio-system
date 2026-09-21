@@ -14,6 +14,9 @@
     "clean:legacy-node-modules": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\dev\\Clean-LegacyNodeModules.ps1",
     "tone:recorder": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\recorder\\Start-ToneRecorderLab.ps1",
     "tone:inject": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\player\\Invoke-MultiTrackToneTest.ps1",
-    "tone:single-mxf": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\player\\Invoke-SingleMxfToneTest.ps1"
+    "tone:single-mxf": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\player\\Invoke-SingleMxfToneTest.ps1",
+    "system:start": "python scripts/player/service_manager.py start-system",
+    "system:stop": "python scripts/player/service_manager.py stop-system",
+    "system:status": "python scripts/player/service_manager.py status"
   }
 }

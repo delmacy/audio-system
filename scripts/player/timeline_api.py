@@ -11,6 +11,7 @@ from timeline_data import build_timeline
 from recorder_status import build_recorder_status
 from recorder_index import initialize as initialize_recorder_index
 from recording_layout import get_recorder_settings, recording_layout_snapshot, update_recorder_settings
+from service_manager import CONTROLLED_FROM_API, restart_service, service_status, start_service, stop_service, system_status
 from config_store import configuration_snapshot, create_cwp, create_gateway, create_service, delete_cwp, delete_gateway, delete_service, get_network_config, list_cwps, list_gateways, list_services, next_cwp_ip, renew_cwp_ips, update_cwp, update_gateway, update_network_config, update_service
 
 HOST = "127.0.0.1"
@@ -75,6 +76,8 @@ class Handler(BaseHTTPRequestHandler):
                     "/api/recorder/status",
                     "/api/recorder/layout",
                     "/api/recorder/settings",
+                    "/api/system/status",
+                    "/api/system/services/<service>/<start|stop|restart>",
                     "/api/playback/plan?lt=<uuid>&from=<utc>&to=<utc>",
                     "/api/playback/audio?lt=<uuid>&from=<utc>&to=<utc>",
                 ],
@@ -148,6 +151,13 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(500, {"error": "recorder_settings_failed", "detail": str(exc)})
             return
 
+        if parsed.path == "/api/system/status":
+            try:
+                self._json(200, system_status())
+            except Exception as exc:
+                self._json(500, {"error": "system_status_failed", "detail": str(exc)})
+            return
+
         if parsed.path == "/api/timeline":
             query = parse_qs(parsed.query)
             date = query.get("date", [None])[0]
@@ -184,6 +194,24 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         try:
             payload = self._read_json_body()
+            if parsed.path.startswith("/api/system/services/"):
+                parts = [part for part in parsed.path.split("/") if part]
+                if len(parts) != 4:
+                    raise ValueError("Expected /api/system/services/<service>/<action>")
+                service = parts[2]
+                action = parts[3]
+                if service not in CONTROLLED_FROM_API:
+                    raise ValueError("This service is supervised by the unified launcher and cannot be controlled from this page")
+                if action == "start":
+                    result = start_service(service)
+                elif action == "stop":
+                    result = stop_service(service)
+                elif action == "restart":
+                    result = restart_service(service)
+                else:
+                    raise ValueError("Action must be start, stop or restart")
+                self._json(200, {"service": result, "system": system_status()})
+                return
             if parsed.path == "/api/cwps":
                 item = create_cwp(
                     label=str(payload.get("label", "")),
