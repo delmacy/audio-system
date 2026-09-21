@@ -17,7 +17,9 @@ param(
     [int]$StartDelayMs = 0,
     [string]$PcmaFile = '',
     [double]$ToneHz = 0,
-    [double]$ToneLevelDbfs = -12
+    [double]$ToneLevelDbfs = -12,
+    [string]$ScheduleFile = '',
+    [string]$RouteKey = ''
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -50,7 +52,22 @@ function New-RtpPacket { param([int]$Seq,[uint32]$Timestamp,[byte[]]$Payload)
     return $packet
 }
 
-if ($StartDelayMs -gt 0) { Start-Sleep -Milliseconds $StartDelayMs }
+$scheduleBursts = @()
+$effectiveStartDelayMs = $StartDelayMs
+if ($ScheduleFile) {
+    if (-not (Test-Path -LiteralPath $ScheduleFile)) { throw "Schedule file not found: $ScheduleFile" }
+    $schedule = Get-Content -LiteralPath $ScheduleFile -Raw | ConvertFrom-Json
+    if ($null -ne $schedule.start_offset_ms) { $effectiveStartDelayMs = [int]$schedule.start_offset_ms }
+    $scheduleBursts = @($schedule.bursts)
+    if ($scheduleBursts.Count -le 0) { throw 'Schedule file contains no bursts.' }
+}
+if ($effectiveStartDelayMs -gt 0) { Start-Sleep -Milliseconds $effectiveStartDelayMs }
+
+if ($scheduleBursts.Count -eq 0) {
+    for ($i = 0; $i -lt $BurstCount; $i++) {
+        $scheduleBursts += [pscustomobject]@{ on_ms = $BurstMs; off_ms = $SilenceMs }
+    }
+}
 
 $generatedPcma = $null
 if ($ToneHz -gt 0) {
@@ -58,7 +75,12 @@ if ($ToneHz -gt 0) {
     $generator = Join-Path $PSScriptRoot '..\generator\audio_generator.py'
     if (-not (Test-Path -LiteralPath $generator)) { throw "Audio generator not found: $generator" }
     $generatedPcma = Join-Path ([IO.Path]::GetTempPath()) ('audio-system-tone-' + [Guid]::NewGuid().ToString('N') + '.pcma')
-    $durationSeconds = [Math]::Max(1.0, ([double]$BurstMs / 1000.0))
+    $maxOnMs = 0
+    foreach ($scheduledBurst in $scheduleBursts) {
+        $candidateOnMs = [int]$scheduledBurst.on_ms
+        if ($candidateOnMs -gt $maxOnMs) { $maxOnMs = $candidateOnMs }
+    }
+    $durationSeconds = [Math]::Max(1.0, ([double]$maxOnMs / 1000.0))
     & python $generator '--frequency' $ToneHz.ToString([Globalization.CultureInfo]::InvariantCulture) '--duration' $durationSeconds.ToString([Globalization.CultureInfo]::InvariantCulture) '--level-dbfs' $ToneLevelDbfs.ToString([Globalization.CultureInfo]::InvariantCulture) '--pcma' $generatedPcma
     if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $generatedPcma)) {
         throw 'Failed to generate temporary PCMA tone for simulator.'
@@ -72,7 +94,9 @@ $udp = New-Object Net.Sockets.UdpClient ([Net.IPEndPoint]::new([Net.IPAddress]::
 $remote = [Net.IPEndPoint]::new([Net.IPAddress]::Parse($RecorderIp),$RecorderRtpPort)
 $cseq = 1
 $serviceSlug = if ($ServiceType.ToLowerInvariant() -eq 'telephone') { 'tel-' + $ServiceId.ToLowerInvariant() } else { 'radio-' + $ServiceId.ToLowerInvariant() }
-$uri = "rtsp://${RecorderIp}:$RtspPort/record/$EndpointId/$serviceSlug"
+$effectiveRouteKey = if ($RouteKey) { $RouteKey } else { "/record/$EndpointId/$serviceSlug" }
+if (-not $effectiveRouteKey.StartsWith('/')) { $effectiveRouteKey = '/' + $effectiveRouteKey }
+$uri = "rtsp://${RecorderIp}:$RtspPort$effectiveRouteKey"
 $sdp = @(
     'v=0',
     ('o=- 0 0 IN IP4 {0}' -f $LocalIp),
@@ -98,9 +122,12 @@ try {
     if ($pcma -and $pcma.Length -lt 160) { throw "PCMA source too short: $PcmaFile" }
     $audioOffset = 0
     $seq = 1000; [uint32]$ts = 0; $activePackets = 0; $pausedPackets = 0; $keepalives = 0
-    foreach($b in 1..$BurstCount){
+    $executedBursts = 0
+    foreach($burst in $scheduleBursts){
+        $activeMs = [Math]::Max(20, [int]$burst.on_ms)
+        $gapMs = [Math]::Max(0, [int]$burst.off_ms)
         $resp = Send-RtspRequest $client ("RECORD $uri RTSP/1.0`r`nCSeq: $cseq`r`nSession: $session`r`n`r`n"); $cseq++
-        $packetCount = [Math]::Max(1,[int]($BurstMs / 20))
+        $packetCount = [Math]::Max(1,[int][Math]::Ceiling($activeMs / 20.0))
         for($p=0;$p -lt $packetCount;$p++){
             if ($pcma) {
                 if ($audioOffset + 160 -gt $pcma.Length) { $audioOffset = 0 }
@@ -110,20 +137,22 @@ try {
             $pkt = New-RtpPacket -Seq $seq -Timestamp $ts -Payload $payload
             [void]$udp.Send($pkt,$pkt.Length,$remote); $seq++; $ts += 160; $activePackets++; Start-Sleep -Milliseconds 20
         }
+        $executedBursts++
         $resp = Send-RtspRequest $client ("PAUSE $uri RTSP/1.0`r`nCSeq: $cseq`r`nSession: $session`r`n`r`n"); $cseq++
         for($q=0;$q -lt $PausedProbePackets;$q++){
             $pkt = New-RtpPacket -Seq $seq -Timestamp $ts -Payload $payload
             [void]$udp.Send($pkt,$pkt.Length,$remote); $seq++; $ts += 160; $pausedPackets++
         }
         $elapsed=0
-        while($elapsed -lt $SilenceMs){
-            Start-Sleep -Milliseconds $KeepaliveIntervalMs
-            $elapsed += $KeepaliveIntervalMs
+        while($elapsed -lt $gapMs){
+            $sleepMs = [Math]::Min($KeepaliveIntervalMs, $gapMs - $elapsed)
+            if ($sleepMs -gt 0) { Start-Sleep -Milliseconds $sleepMs }
+            $elapsed += $sleepMs
             $resp = Send-RtspRequest $client ("GET_PARAMETER $uri RTSP/1.0`r`nCSeq: $cseq`r`nSession: $session`r`n`r`n"); $cseq++; $keepalives++
         }
     }
     $resp = Send-RtspRequest $client ("TEARDOWN $uri RTSP/1.0`r`nCSeq: $cseq`r`nSession: $session`r`n`r`n"); $cseq++
-    Write-Host ('SERVICE MONO SIMULATOR: PASS session={0} service={1} media_flow={2} bursts={3} active_packets={4} paused_probe_packets={5} keepalives={6}' -f $session,$ServiceId,$MediaFlow,$BurstCount,$activePackets,$pausedPackets,$keepalives) -ForegroundColor Green
+    Write-Host ('SERVICE MONO SIMULATOR: PASS session={0} service={1} media_flow={2} bursts={3} active_packets={4} paused_probe_packets={5} keepalives={6} scheduled={7}' -f $session,$ServiceId,$MediaFlow,$executedBursts,$activePackets,$pausedPackets,$keepalives,[bool]$ScheduleFile) -ForegroundColor Green
 } finally {
     if($udp){$udp.Close()}
     if($client){$client.Close()}
