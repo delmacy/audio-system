@@ -20,11 +20,14 @@
 #define RTSP_BUFFER_SIZE 65536
 #define RTP_PACKET_MAX 65536
 #define DEFAULT_MAX_SECONDS 120
-#define MAX_SESSIONS 64
-#define MAX_CLIENTS 64
+#define MAX_SESSIONS 256
+#define MAX_CLIENTS 128
+#define MAX_SHARED_GROUPS 16
 #define SESSION_MAP_FIELDS 16
 
 typedef struct RecorderHost RecorderHost;
+typedef struct RecorderSession RecorderSession;
+typedef struct SharedMuxGroup SharedMuxGroup;
 
 typedef struct SessionConfig {
     char route_key[512];
@@ -45,7 +48,7 @@ typedef struct SessionConfig {
     char session_kind[32];
 } SessionConfig;
 
-typedef struct RecorderSession {
+struct RecorderSession {
     RecorderHost *host;
     SessionConfig cfg;
     StorageWriter writer;
@@ -103,8 +106,9 @@ typedef struct RecorderSession {
     volatile LONG finalize_state; /* 0=active, 1=finalizing, 2=finalized */
     HANDLE finalizer_thread;
     char finalize_reason[512];
-} RecorderSession;
-
+    SharedMuxGroup *shared_group;
+    int track_index;
+};
 typedef struct ClientConnection {
     SOCKET socket;
     char buffer[RTSP_BUFFER_SIZE + 1];
@@ -125,7 +129,32 @@ typedef struct HostConfig {
     int legacy_mode;
     int rotate_window_after_pauses;
     int rotate_window_max_count;
+    int shared_mxf_by_output;
 } HostConfig;
+
+struct SharedMuxGroup {
+    RecorderHost *host;
+    char output_partial[4096];
+    char output_final[4096];
+    char lock_path[4096];
+    char file_id[128];
+    char window_start_utc[64];
+    char category[32];
+    unsigned int segment_sequence;
+    StorageWriter writer;
+    GstElement *pipeline;
+    GstElement *mux;
+    GstElement *appsink;
+    GstBus *bus;
+    int session_indices[MAX_SESSIONS];
+    int session_count;
+    unsigned long long mux_bytes_written;
+    int sink_error;
+    int pipeline_error;
+    int finalized;
+    int final_ok;
+    volatile LONG finalize_state;
+};
 
 struct RecorderHost {
     HostConfig cfg;
@@ -135,6 +164,8 @@ struct RecorderHost {
     ClientConnection clients[MAX_CLIENTS];
     RecorderSession sessions[MAX_SESSIONS];
     int session_count;
+    SharedMuxGroup shared_groups[MAX_SHARED_GROUPS];
+    int shared_group_count;
     int shutdown_requested;
     int server_failed;
 };
@@ -240,7 +271,7 @@ static char *stristr(const char *haystack, const char *needle) {
 }
 
 static void audit_event(RecorderHost *host, RecorderSession *session, const char *event, const char *detail) {
-    char now[64], e_event[256], e_detail[4096], e_session[256], e_logical[256], e_instance[256], e_file[256], e_route[1024];
+    char now[64], e_event[256], e_detail[4096], e_session[256], e_logical[256], e_instance[256], e_file[256], e_route[1024], e_kind[128];
     if (!host || !host->audit) return;
     storage_utc_now(now, sizeof(now));
     json_escape(event, e_event, sizeof(e_event));
@@ -250,10 +281,11 @@ static void audit_event(RecorderHost *host, RecorderSession *session, const char
     json_escape(session ? session->cfg.instance_uuid : "", e_instance, sizeof(e_instance));
     json_escape(session ? session->cfg.file_id : "", e_file, sizeof(e_file));
     json_escape(session ? session->cfg.route_key : "", e_route, sizeof(e_route));
+    json_escape(session ? session->cfg.session_kind : "", e_kind, sizeof(e_kind));
     EnterCriticalSection(&host->audit_lock);
     fprintf(host->audit,
-        "{\"ts_utc\":\"%s\",\"event\":\"%s\",\"session_id\":\"%s\",\"route_key\":\"%s\",\"file_id\":\"%s\",\"logical_track_uuid\":\"%s\",\"track_instance_uuid\":\"%s\",\"detail\":\"%s\"}\n",
-        now, e_event, e_session, e_route, e_file, e_logical, e_instance, e_detail);
+        "{\"ts_utc\":\"%s\",\"event\":\"%s\",\"session_id\":\"%s\",\"route_key\":\"%s\",\"file_id\":\"%s\",\"logical_track_uuid\":\"%s\",\"track_instance_uuid\":\"%s\",\"track_index\":%d,\"session_kind\":\"%s\",\"detail\":\"%s\"}\n",
+        now, e_event, e_session, e_route, e_file, e_logical, e_instance, session ? session->track_index : -1, e_kind, e_detail);
     fflush(host->audit);
     LeaveCriticalSection(&host->audit_lock);
 }
@@ -419,6 +451,7 @@ static int parse_host_config(int argc, char **argv, RecorderHost *host) {
     host->cfg.max_seconds = atoi((v = arg_value(argc, argv, "--max-seconds")) ? v : "120");
     host->cfg.rotate_window_after_pauses = atoi((v = arg_value(argc, argv, "--rotate-window-after-pauses")) ? v : "0");
     host->cfg.rotate_window_max_count = atoi((v = arg_value(argc, argv, "--rotate-window-max-count")) ? v : "0");
+    host->cfg.shared_mxf_by_output = has_arg(argc, argv, "--shared-mxf-by-output");
     if (!host->cfg.audit_path[0] || !host->cfg.plugin_dll[0]) return 0;
     if (host->cfg.rtsp_port < 1 || host->cfg.rtsp_port > 65535 || host->cfg.max_seconds < 1) return 0;
     if (host->cfg.session_map_path[0]) return load_session_map(host, host->cfg.session_map_path);
@@ -438,6 +471,269 @@ static gboolean load_identity_plugin(const char *path) {
     g_print("IDENTITY PLUGIN LOADED: %s\n", path);
     gst_object_unref(plugin);
     return TRUE;
+}
+
+
+static GstFlowReturn on_shared_mux_sample(GstElement *sink, gpointer user_data) {
+    SharedMuxGroup *group = (SharedMuxGroup *)user_data;
+    GstSample *sample = NULL;
+    GstBuffer *buffer;
+    GstMapInfo map;
+    char error_text[1024] = {0};
+    g_signal_emit_by_name(sink, "pull-sample", &sample);
+    if (!sample) return GST_FLOW_ERROR;
+    buffer = gst_sample_get_buffer(sample);
+    if (!buffer || !gst_buffer_map(buffer, &map, GST_MAP_READ)) {
+        gst_sample_unref(sample);
+        group->sink_error = 1;
+        return GST_FLOW_ERROR;
+    }
+    if (!storage_writer_write(&group->writer, map.data, map.size, error_text, sizeof(error_text))) {
+        group->sink_error = 1;
+        g_printerr("Shared StorageWriter failure category=%s: %s\n", group->category, error_text);
+        audit_event(group->host, NULL, "INTEGRITY_FAILURE", error_text);
+        gst_buffer_unmap(buffer, &map);
+        gst_sample_unref(sample);
+        return GST_FLOW_ERROR;
+    }
+    group->mux_bytes_written += map.size;
+    gst_buffer_unmap(buffer, &map);
+    gst_sample_unref(sample);
+    return GST_FLOW_OK;
+}
+
+static SharedMuxGroup *find_shared_group(RecorderHost *host, const char *output_final) {
+    int i;
+    if (!host || !output_final) return NULL;
+    for (i = 0; i < host->shared_group_count; i++) {
+        if (_stricmp(host->shared_groups[i].output_final, output_final) == 0) return &host->shared_groups[i];
+    }
+    return NULL;
+}
+
+static int attach_shared_track(SharedMuxGroup *group, RecorderSession *session, int track_index) {
+    GstCaps *caps;
+    GstPad *src_pad;
+    GstPad *mux_pad;
+    if (!group || !session || !group->pipeline || !group->mux) return 0;
+    session->appsrc = gst_element_factory_make("appsrc", NULL);
+    if (!session->appsrc) return 0;
+    caps = gst_caps_from_string("audio/x-alaw,rate=8000,channels=1");
+    g_object_set(session->appsrc,
+        "caps", caps,
+        "format", GST_FORMAT_TIME,
+        "is-live", TRUE,
+        "block", FALSE,
+        "max-bytes", (guint64)(8000 * 5),
+        NULL);
+    gst_caps_unref(caps);
+    gst_bin_add(GST_BIN(group->pipeline), session->appsrc);
+    src_pad = gst_element_get_static_pad(session->appsrc, "src");
+    mux_pad = gst_element_request_pad_simple(group->mux, "alaw_audio_sink_%u");
+    if (!src_pad || !mux_pad || gst_pad_link(src_pad, mux_pad) != GST_PAD_LINK_OK) {
+        if (src_pad) gst_object_unref(src_pad);
+        if (mux_pad) gst_object_unref(mux_pad);
+        return 0;
+    }
+    g_object_set(G_OBJECT(mux_pad),
+        "track-name", session->cfg.display_name,
+        "logical-track-uuid", session->cfg.logical_uuid,
+        "track-instance-uuid", session->cfg.instance_uuid,
+        NULL);
+    gst_object_unref(src_pad);
+    gst_object_unref(mux_pad);
+    session->shared_group = group;
+    session->track_index = track_index;
+    return 1;
+}
+
+static int build_shared_groups(RecorderHost *host) {
+    int i, g;
+    char error_text[1024] = {0};
+    if (!host || !host->cfg.shared_mxf_by_output) return 1;
+
+    for (i = 0; i < host->session_count; i++) {
+        RecorderSession *session = &host->sessions[i];
+        SharedMuxGroup *group = find_shared_group(host, session->cfg.output_final);
+        if (!group) {
+            if (host->shared_group_count >= MAX_SHARED_GROUPS) {
+                g_printerr("Shared MXF group count exceeds MAX_SHARED_GROUPS=%d.\n", MAX_SHARED_GROUPS);
+                return 0;
+            }
+            group = &host->shared_groups[host->shared_group_count++];
+            memset(group, 0, sizeof(*group));
+            group->host = host;
+            safe_copy(group->output_partial, sizeof(group->output_partial), session->cfg.output_partial);
+            safe_copy(group->output_final, sizeof(group->output_final), session->cfg.output_final);
+            safe_copy(group->lock_path, sizeof(group->lock_path), session->cfg.lock_path);
+            safe_copy(group->file_id, sizeof(group->file_id), session->cfg.file_id);
+            safe_copy(group->window_start_utc, sizeof(group->window_start_utc), session->cfg.window_start_utc);
+            safe_copy(group->category, sizeof(group->category), session->cfg.session_kind);
+            group->segment_sequence = session->cfg.segment_sequence;
+            storage_writer_init(&group->writer);
+        } else {
+            if (_stricmp(group->file_id, session->cfg.file_id) != 0) {
+                g_printerr("Routes sharing output_final must share file_id: %s\n", session->cfg.output_final);
+                return 0;
+            }
+            if (_stricmp(group->category, session->cfg.session_kind) != 0) {
+                g_printerr("Routes sharing output_final must share session_kind: %s\n", session->cfg.output_final);
+                return 0;
+            }
+        }
+        if (group->session_count >= MAX_SESSIONS) return 0;
+        group->session_indices[group->session_count++] = i;
+        session->shared_group = group;
+    }
+
+    for (g = 0; g < host->shared_group_count; g++) {
+        SharedMuxGroup *group = &host->shared_groups[g];
+        GstStateChangeReturn state_result;
+        if (!storage_writer_open(&group->writer,
+            group->output_partial,
+            group->output_final,
+            group->lock_path,
+            group->file_id,
+            host->cfg.recorder_id,
+            group->window_start_utc,
+            group->segment_sequence,
+            error_text,
+            sizeof(error_text))) {
+            g_printerr("Shared StorageWriter open failed category=%s: %s\n", group->category, error_text);
+            return 0;
+        }
+        group->pipeline = gst_pipeline_new(NULL);
+        group->mux = gst_element_factory_make("mxfidmux", NULL);
+        group->appsink = gst_element_factory_make("appsink", NULL);
+        if (!group->pipeline || !group->mux || !group->appsink) return 0;
+        g_object_set(group->appsink,
+            "emit-signals", TRUE,
+            "sync", FALSE,
+            "async", FALSE,
+            "max-buffers", 128,
+            "drop", FALSE,
+            NULL);
+        g_signal_connect(group->appsink, "new-sample", G_CALLBACK(on_shared_mux_sample), group);
+        gst_bin_add_many(GST_BIN(group->pipeline), group->mux, group->appsink, NULL);
+        if (!gst_element_link(group->mux, group->appsink)) return 0;
+
+        for (i = 0; i < group->session_count; i++) {
+            RecorderSession *session = &host->sessions[group->session_indices[i]];
+            if (!attach_shared_track(group, session, i)) {
+                g_printerr("Could not attach shared MXF track category=%s route=%s index=%d.\n",
+                    group->category, session->cfg.route_key, i);
+                return 0;
+            }
+        }
+        group->bus = gst_element_get_bus(group->pipeline);
+        state_result = gst_element_set_state(group->pipeline, GST_STATE_PLAYING);
+        if (state_result == GST_STATE_CHANGE_FAILURE) return 0;
+        g_print("SHARED MXF ARMED category=%s tracks=%d file=%s\n",
+            group->category, group->session_count, group->output_final);
+    }
+    return 1;
+}
+
+static int shared_group_all_sessions_finalized(SharedMuxGroup *group) {
+    int i;
+    if (!group || !group->host) return 0;
+    for (i = 0; i < group->session_count; i++) {
+        RecorderSession *session = &group->host->sessions[group->session_indices[i]];
+        if (!session->finalized) return 0;
+    }
+    return 1;
+}
+
+static int finalize_shared_group(SharedMuxGroup *group) {
+    GstMessage *msg = NULL;
+    int ok = 1;
+    int i;
+    char error_text[1024] = {0};
+    if (!group) return 0;
+    if (InterlockedCompareExchange(&group->finalize_state, 1, 0) != 0) return group->final_ok;
+    if (group->bus) {
+        msg = gst_bus_timed_pop_filtered(group->bus, 10 * GST_SECOND, GST_MESSAGE_EOS | GST_MESSAGE_ERROR);
+        if (!msg) ok = 0;
+        else if (GST_MESSAGE_TYPE(msg) == GST_MESSAGE_ERROR) ok = 0;
+        if (msg) gst_message_unref(msg);
+    }
+    if (group->pipeline) gst_element_set_state(group->pipeline, GST_STATE_NULL);
+    if (group->sink_error || group->pipeline_error || group->writer.had_error) ok = 0;
+    if (ok) {
+        if (!storage_writer_finalize(&group->writer, error_text, sizeof(error_text))) {
+            audit_event(group->host, NULL, "INTEGRITY_FAILURE", error_text);
+            ok = 0;
+        } else {
+            char detail[4600];
+            snprintf(detail, sizeof(detail), "category=%s file_id=%s tracks=%d final=%s",
+                group->category, group->file_id, group->session_count, group->output_final);
+            audit_event(group->host, NULL, "SHARED_MXF_CLOSED_COMPLETE", detail);
+        }
+    }
+    if (!ok) storage_writer_abort(&group->writer);
+    group->finalized = 1;
+    group->final_ok = ok;
+    InterlockedExchange(&group->finalize_state, 2);
+    for (i = 0; i < group->session_count; i++) {
+        RecorderSession *session = &group->host->sessions[group->session_indices[i]];
+        if (ok) session->windows_closed_complete++;
+        else {
+            session->final_ok = 0;
+            session->failed = 1;
+        }
+    }
+    return ok;
+}
+
+static void maybe_finalize_shared_group(SharedMuxGroup *group) {
+    if (group && !group->finalized && shared_group_all_sessions_finalized(group)) finalize_shared_group(group);
+}
+
+static int poll_shared_group_error(SharedMuxGroup *group) {
+    GstMessage *msg;
+    if (!group || !group->bus || group->finalized) return 0;
+    while ((msg = gst_bus_pop_filtered(group->bus, GST_MESSAGE_ERROR | GST_MESSAGE_WARNING)) != NULL) {
+        if (GST_MESSAGE_TYPE(msg) == GST_MESSAGE_ERROR) {
+            GError *err = NULL;
+            gchar *debug = NULL;
+            char detail[2048];
+            gst_message_parse_error(msg, &err, &debug);
+            snprintf(detail, sizeof(detail), "Shared MXF category=%s error: %s debug=%s",
+                group->category, err ? err->message : "unknown", debug ? debug : "");
+            audit_event(group->host, NULL, "INTEGRITY_FAILURE", detail);
+            if (err) g_error_free(err);
+            g_free(debug);
+            gst_message_unref(msg);
+            group->pipeline_error = 1;
+            return 1;
+        }
+        gst_message_unref(msg);
+    }
+    return 0;
+}
+
+static void destroy_shared_groups(RecorderHost *host) {
+    int g;
+    if (!host) return;
+    for (g = 0; g < host->shared_group_count; g++) {
+        SharedMuxGroup *group = &host->shared_groups[g];
+        if (!group->finalized) {
+            int i;
+            for (i = 0; i < group->session_count; i++) {
+                RecorderSession *session = &host->sessions[group->session_indices[i]];
+                if (session->appsrc && !session->finalized) {
+                    GstFlowReturn flow = GST_FLOW_OK;
+                    g_signal_emit_by_name(session->appsrc, "end-of-stream", &flow);
+                    session->finalized = 1;
+                }
+            }
+            finalize_shared_group(group);
+        }
+        if (group->bus) gst_object_unref(group->bus);
+        group->bus = NULL;
+        if (group->pipeline) gst_object_unref(group->pipeline);
+        group->pipeline = group->mux = group->appsink = NULL;
+    }
 }
 
 static GstFlowReturn on_mux_sample(GstElement *sink, gpointer user_data) {
@@ -553,7 +849,7 @@ static int init_session(RecorderHost *host, RecorderSession *session, int index)
         (unsigned long)GetCurrentProcessId(), index + 1, (unsigned long long)GetTickCount64());
     session->rotate_after_pause_count = host->cfg.rotate_window_after_pauses;
     session->rotate_max_count = host->cfg.rotate_window_max_count;
-    session->window_rotation_enabled = (session->rotate_after_pause_count > 0 && session->rotate_max_count > 0);
+    session->window_rotation_enabled = (!session->shared_group && session->rotate_after_pause_count > 0 && session->rotate_max_count > 0);
     session->rotations_completed = 0;
     session->windows_closed_complete = 0;
     session->window_open_count = 1;
@@ -561,28 +857,30 @@ static int init_session(RecorderHost *host, RecorderSession *session, int index)
     if (session->window_rotation_enabled) {
         build_segment_paths(session, session->cfg.segment_sequence);
     }
-    if (!storage_writer_open(&session->writer,
-        session->cfg.output_partial,
-        session->cfg.output_final,
-        session->cfg.lock_path,
-        session->cfg.file_id,
-        host->cfg.recorder_id,
-        session->cfg.window_start_utc,
-        session->cfg.segment_sequence,
-        error_text,
-        sizeof(error_text))) {
-        g_printerr("StorageWriter open failed route=%s: %s\n", session->cfg.route_key, error_text);
-        return 0;
-    }
-    if (!build_pipeline(session)) {
-        g_printerr("Pipeline build failed route=%s.\n", session->cfg.route_key);
-        storage_writer_abort(&session->writer);
-        return 0;
+    if (!session->shared_group) {
+        if (!storage_writer_open(&session->writer,
+            session->cfg.output_partial,
+            session->cfg.output_final,
+            session->cfg.lock_path,
+            session->cfg.file_id,
+            host->cfg.recorder_id,
+            session->cfg.window_start_utc,
+            session->cfg.segment_sequence,
+            error_text,
+            sizeof(error_text))) {
+            g_printerr("StorageWriter open failed route=%s: %s\n", session->cfg.route_key, error_text);
+            return 0;
+        }
+        if (!build_pipeline(session)) {
+            g_printerr("Pipeline build failed route=%s.\n", session->cfg.route_key);
+            storage_writer_abort(&session->writer);
+            return 0;
+        }
     }
     if (!open_bound_socket(host->cfg.bind_ip, session->cfg.rtp_port, SOCK_DGRAM, IPPROTO_UDP, &session->rtp_socket)) {
         g_printerr("Could not bind RTP route=%s %s:%d WSA=%d.\n", session->cfg.route_key, host->cfg.bind_ip, session->cfg.rtp_port, WSAGetLastError());
-        gst_element_set_state(session->pipeline, GST_STATE_NULL);
-        storage_writer_abort(&session->writer);
+        if (session->pipeline) gst_element_set_state(session->pipeline, GST_STATE_NULL);
+        if (!session->shared_group) storage_writer_abort(&session->writer);
         return 0;
     }
     audit_event(host, session, "NEXT_WINDOW_ARMED", "Session writer/pipeline/RTP socket prepared before RTSP traffic");
@@ -591,6 +889,12 @@ static int init_session(RecorderHost *host, RecorderSession *session, int index)
 
 static void destroy_pipeline(RecorderSession *session) {
     if (!session) return;
+    if (session->shared_group) {
+        session->appsrc = NULL;
+        session->pipeline = session->mux = session->appsink = NULL;
+        session->bus = NULL;
+        return;
+    }
     if (session->bus) gst_object_unref(session->bus);
     session->bus = NULL;
     if (session->pipeline) gst_object_unref(session->pipeline);
@@ -718,6 +1022,19 @@ static int finalize_session(RecorderSession *session, const char *reason) {
         audit_event(session->host, session, "KEEPALIVE_OK", detail);
     }
     audit_event(session->host, session, "SESSION_CLOSE", reason ? reason : "Session beginning graceful file finalization");
+    if (session->shared_group) {
+        if (session->appsrc) g_signal_emit_by_name(session->appsrc, "end-of-stream", &flow);
+        if (!session->appsrc || flow != GST_FLOW_OK) ok = 0;
+        if (session->rtp_socket != INVALID_SOCKET) {
+            closesocket(session->rtp_socket);
+            session->rtp_socket = INVALID_SOCKET;
+        }
+        session->finalized = 1;
+        session->final_ok = ok && !session->shared_group->sink_error && !session->shared_group->pipeline_error;
+        session->failed = !session->final_ok;
+        maybe_finalize_shared_group(session->shared_group);
+        return session->final_ok;
+    }
     if (session->appsrc) g_signal_emit_by_name(session->appsrc, "end-of-stream", &flow);
     if (!session->appsrc || flow != GST_FLOW_OK) ok = 0;
     if (session->bus) {
@@ -791,6 +1108,20 @@ static int begin_finalize_session(RecorderSession *session, const char *reason) 
 static void abort_session(RecorderSession *session, const char *reason) {
     if (!session || session->finalized) return;
     audit_event(session->host, session, "CONNECTION_LOST", reason ? reason : "Session aborted");
+    if (session->shared_group) {
+        if (session->appsrc) {
+            GstFlowReturn flow = GST_FLOW_OK;
+            g_signal_emit_by_name(session->appsrc, "end-of-stream", &flow);
+        }
+        if (session->rtp_socket != INVALID_SOCKET) closesocket(session->rtp_socket);
+        session->rtp_socket = INVALID_SOCKET;
+        session->finalized = 1;
+        session->final_ok = 0;
+        session->failed = 1;
+        InterlockedExchange(&session->finalize_state, 2);
+        maybe_finalize_shared_group(session->shared_group);
+        return;
+    }
     if (session->pipeline) gst_element_set_state(session->pipeline, GST_STATE_NULL);
     storage_writer_abort(&session->writer);
     if (session->rtp_socket != INVALID_SOCKET) closesocket(session->rtp_socket);
@@ -811,7 +1142,7 @@ static int all_sessions_finalized(RecorderHost *host) {
 
 static int poll_pipeline_error(RecorderSession *session) {
     GstMessage *msg;
-    if (!session || !session->bus || session->finalized || session->finalize_state != 0) return 0;
+    if (!session || session->shared_group || !session->bus || session->finalized || session->finalize_state != 0) return 0;
     while ((msg = gst_bus_pop_filtered(session->bus, GST_MESSAGE_ERROR | GST_MESSAGE_WARNING)) != NULL) {
         if (GST_MESSAGE_TYPE(msg) == GST_MESSAGE_ERROR) {
             GError *err = NULL;
@@ -1248,8 +1579,10 @@ static void write_ready_file(RecorderHost *host) {
     fprintf(fp, "{\n  \"ready\": true,\n  \"schema\": \"recorder-poc.multisession-ready.v1\",\n  \"ts_utc\": \"%s\",\n  \"bind_ip\": \"%s\",\n  \"rtsp_port\": %d,\n  \"session_count\": %d,\n  \"sessions\": [\n", now, host->cfg.bind_ip, host->cfg.rtsp_port, host->session_count);
     for (i = 0; i < host->session_count; i++) {
         RecorderSession *s = &host->sessions[i];
-        fprintf(fp, "    {\"route_key\":\"%s\",\"rtp_port\":%d,\"logical_track_uuid\":\"%s\",\"track_instance_uuid\":\"%s\"}%s\n",
-            s->cfg.route_key, s->cfg.rtp_port, s->cfg.logical_uuid, s->cfg.instance_uuid, i + 1 == host->session_count ? "" : ",");
+        fprintf(fp, "    {\"route_key\":\"%s\",\"rtp_port\":%d,\"logical_track_uuid\":\"%s\",\"track_instance_uuid\":\"%s\",\"file_id\":\"%s\",\"track_index\":%d,\"category\":\"%s\",\"output_final\":\"%s\"}%s\n",
+            s->cfg.route_key, s->cfg.rtp_port, s->cfg.logical_uuid, s->cfg.instance_uuid,
+            s->cfg.file_id, s->track_index, s->cfg.session_kind, s->cfg.output_final,
+            i + 1 == host->session_count ? "" : ",");
     }
     fprintf(fp, "  ]\n}\n");
     fclose(fp);
@@ -1325,6 +1658,19 @@ static int run_server(RecorderHost *host) {
             if (!session->finalized && poll_pipeline_error(session)) {
                 abort_session(session, "GStreamer pipeline failure");
                 host->server_failed = 1;
+            }
+        }
+        if (host->cfg.shared_mxf_by_output) {
+            int g;
+            for (g = 0; g < host->shared_group_count; g++) {
+                if (poll_shared_group_error(&host->shared_groups[g])) {
+                    int j;
+                    host->server_failed = 1;
+                    for (j = 0; j < host->shared_groups[g].session_count; j++) {
+                        RecorderSession *s = &host->sessions[host->shared_groups[g].session_indices[j]];
+                        if (!s->finalized) abort_session(s, "Shared MXF pipeline failure");
+                    }
+                }
             }
         }
         if (all_sessions_finalized(host)) host->shutdown_requested = 1;
@@ -1414,6 +1760,7 @@ static void cleanup_host(RecorderHost *host) {
             destroy_pipeline(s);
         }
     }
+    if (host->cfg.shared_mxf_by_output) destroy_shared_groups(host);
     if (host->audit) fclose(host->audit);
     host->audit = NULL;
     DeleteCriticalSection(&host->audit_lock);
@@ -1456,7 +1803,7 @@ int main(int argc, char **argv) {
     gst_init(&argc, &argv);
     if (has_arg(argc, argv, "selftest") || (argc > 1 && strcmp(argv[1], "selftest") == 0)) return selftest(argc, argv);
     if (!parse_host_config(argc, argv, &host)) {
-        g_printerr("Usage multi: recorder-host --bind-ip IP --rtsp-port PORT --session-map sessions.tsv --audit audit.jsonl --plugin-dll gstmxfidentity.dll [--ready-file FILE] [--recorder-id ID] [--max-seconds N] [--rotate-window-after-pauses N --rotate-window-max-count N]\n");
+        g_printerr("Usage multi: recorder-host --bind-ip IP --rtsp-port PORT --session-map sessions.tsv --audit audit.jsonl --plugin-dll gstmxfidentity.dll [--ready-file FILE] [--recorder-id ID] [--max-seconds N] [--rotate-window-after-pauses N --rotate-window-max-count N] [--shared-mxf-by-output]\n");
         g_printerr("Legacy single-session arguments from Phase 3/4 remain supported when --session-map is omitted.\n");
         return 2;
     }
@@ -1472,6 +1819,11 @@ int main(int argc, char **argv) {
     if (!load_identity_plugin(host.cfg.plugin_dll)) {
         cleanup_host(&host);
         return 5;
+    }
+    if (host.cfg.shared_mxf_by_output && !build_shared_groups(&host)) {
+        host.server_failed = 1;
+        cleanup_host(&host);
+        return 6;
     }
     for (i = 0; i < host.session_count; i++) {
         if (!init_session(&host, &host.sessions[i], i)) {
