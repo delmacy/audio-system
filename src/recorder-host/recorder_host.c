@@ -14,6 +14,7 @@
 #include <objbase.h>
 #include "storage_writer.h"
 #include "event_file_manager.h"
+#include "event_audio_buffer.h"
 
 #pragma comment(lib, "Ws2_32.lib")
 #pragma comment(lib, "Ole32.lib")
@@ -77,6 +78,8 @@ struct RecorderSession {
     int event_rearm_requested;
     int event_answered;
     unsigned int event_sequence;
+    int event_materialize_requested;
+    EventAudioBuffer event_buffer;
     int announced;
     int setup_done;
     int recording;
@@ -1008,6 +1011,8 @@ static int init_session(RecorderHost *host, RecorderSession *session, int index)
     session->event_rearm_requested = 0;
     session->event_answered = 0;
     session->event_sequence = 0;
+    session->event_materialize_requested = 0;
+    event_audio_buffer_init(&session->event_buffer);
     session->interaction_id[0] = 0;
     session->leg_id[0] = 0;
     session->event_media_start_utc[0] = 0;
@@ -1260,6 +1265,76 @@ static int open_event_file(RecorderSession *session) {
     return 1;
 }
 
+static int materialize_event_buffer(RecorderSession *session) {
+    unsigned int i;
+    if (!session || !session->host || !session->host->cfg.event_files_mode)
+        return 0;
+    if (!session->event_materialize_requested) return 1;
+    if (session->event_file_open) {
+        session->event_materialize_requested = 0;
+        event_audio_buffer_reset(&session->event_buffer);
+        return 1;
+    }
+    if (session->event_buffer.frame_count == 0) {
+        session->event_materialize_requested = 0;
+        return 1;
+    }
+
+    if (!session->event_media_start_utc[0] &&
+        session->event_buffer.first_ingress_utc[0]) {
+        safe_copy(session->event_media_start_utc,
+            sizeof(session->event_media_start_utc),
+            session->event_buffer.first_ingress_utc);
+    }
+    if (!open_event_file(session)) return 0;
+
+    if (!session->media_active) {
+        audit_media_boundary(session, "MEDIA_START",
+            "Buffered first RTP payload established event media origin");
+        session->media_active = 1;
+        session->media_intervals_started++;
+    }
+
+    for (i = 0; i < session->event_buffer.frame_count; i++) {
+        const EventAudioFrame *frame =
+            event_audio_buffer_frame(&session->event_buffer, i);
+        if (!frame) return 0;
+        if (!push_rtp_payload(session,
+                session->event_buffer.data + frame->offset,
+                (int)frame->length,
+                (guint32)frame->rtp_timestamp)) {
+            audit_event(session->host, session, "INTEGRITY_FAILURE",
+                "Buffered event RTP could not be pushed to MXF pipeline");
+            session->pipeline_error = 1;
+            return 0;
+        }
+        session->rtp_packets_recorded++;
+        session->rtp_payload_bytes_recorded += frame->length;
+    }
+
+    session->event_materialize_requested = 0;
+    event_audio_buffer_reset(&session->event_buffer);
+    audit_event(session->host, session, "EVENT_BUFFER_DRAINED",
+        "Ingress buffer drained after event MXF materialization");
+    return 1;
+}
+
+static int process_event_materializations(RecorderHost *host, int budget) {
+    int i, processed = 0;
+    if (!host || !host->cfg.event_files_mode) return 1;
+    if (budget <= 0) budget = 1;
+    for (i = 0; i < host->session_count && processed < budget; i++) {
+        RecorderSession *session = &host->sessions[i];
+        if (!session->event_materialize_requested) continue;
+        if (!materialize_event_buffer(session)) {
+            host->server_failed = 1;
+            return 0;
+        }
+        processed++;
+    }
+    return 1;
+}
+
 static void request_event_file_close(
     RecorderSession *session,
     const char *reason,
@@ -1333,6 +1408,8 @@ static void rearm_event_route(RecorderSession *session, const char *reason) {
     session->last_payload_len = 0;
     session->event_answered = 0;
     session->event_rearm_requested = 0;
+    session->event_materialize_requested = 0;
+    event_audio_buffer_reset(&session->event_buffer);
     session->interaction_id[0] = 0;
     session->leg_id[0] = 0;
     session->event_media_start_utc[0] = 0;
@@ -1374,6 +1451,10 @@ static int finalize_session(RecorderSession *session, const char *reason) {
     char error_text[1024] = {0};
     if (!session || session->finalized) return session ? session->final_ok : 0;
     if (session->host && session->host->cfg.event_files_mode) {
+        if (session->event_materialize_requested) {
+            if (!materialize_event_buffer(session))
+                ok = 0;
+        }
         if (session->media_active) {
             audit_media_boundary(session, "MEDIA_END",
                 reason ? reason : "Host finalization closed event media");
@@ -2258,16 +2339,23 @@ static int handle_rtp_packet(RecorderSession *session, unsigned char *packet, in
         return 1;
     }
     if (session->host->cfg.event_files_mode && !session->event_file_open) {
-        if (!session->event_media_start_utc[0])
-            storage_utc_now(session->event_media_start_utc,
-                sizeof(session->event_media_start_utc));
-        if (!open_event_file(session)) {
+        char ingress_utc[64];
+        storage_utc_now(ingress_utc, sizeof(ingress_utc));
+        if (!event_audio_buffer_push(&session->event_buffer,
+                packet + offset, (unsigned int)payload_len, ts, ingress_utc)) {
             audit_event(session->host, session, "INTEGRITY_FAILURE",
-                "Could not materialize event MXF from first accepted RTP packet");
+                "Event ingress buffer exhausted before MXF materialization");
             return 0;
         }
-        audit_event(session->host, session, "MEDIA_INGRESS_ORIGIN",
-            "media_start_utc fixed from first accepted RTP packet; file creation time is non-authoritative");
+        if (!session->event_media_start_utc[0])
+            safe_copy(session->event_media_start_utc,
+                sizeof(session->event_media_start_utc),
+                session->event_buffer.first_ingress_utc);
+        session->event_materialize_requested = 1;
+        if (session->event_buffer.frame_count == 1)
+            audit_event(session->host, session, "MEDIA_INGRESS_ORIGIN",
+                "media_start_utc fixed before filesystem/MXF work; payload buffered for deferred materialization");
+        return 1;
     }
     if (!session->media_active) {
         audit_media_boundary(session, "MEDIA_START", "First RTP payload accepted on route after RECORD");
@@ -2489,6 +2577,9 @@ static int run_server(RecorderHost *host) {
             }
         }
         if (host->cfg.event_files_mode &&
+            !process_event_materializations(host, 64))
+            return 0;
+        if (host->cfg.event_files_mode &&
             !process_event_file_closures(host, 32))
             return 0;
         if (all_sessions_finalized(host)) host->shutdown_requested = 1;
@@ -2642,6 +2733,7 @@ static void cleanup_host(RecorderHost *host) {
             s->rtp_socket = INVALID_SOCKET;
             destroy_pipeline(s);
         }
+        event_audio_buffer_free(&s->event_buffer);
     }
     if (host->cfg.shared_mxf_by_output) destroy_shared_groups(host);
     if (host->audit) fclose(host->audit);
