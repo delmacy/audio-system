@@ -190,6 +190,12 @@ struct SharedMuxGroup {
     volatile LONG finalize_state;
 };
 
+static int push_rtp_payload(
+    RecorderSession *session,
+    const unsigned char *payload,
+    int payload_len,
+    guint32 timestamp);
+
 struct RecorderHost {
     HostConfig cfg;
     FILE *audit;
@@ -2778,7 +2784,7 @@ int main(int argc, char **argv) {
     gst_init(&argc, &argv);
     if (has_arg(argc, argv, "selftest") || (argc > 1 && strcmp(argv[1], "selftest") == 0)) return selftest(argc, argv);
     if (!parse_host_config(argc, argv, &host)) {
-        g_printerr("Usage multi: recorder-host --bind-ip IP --rtsp-port PORT --session-map sessions.tsv --audit audit.jsonl --plugin-dll gstmxfidentity.dll [--ready-file FILE] [--recorder-id ID] [--max-seconds N] [--rotate-window-after-pauses N --rotate-window-max-count N] [--shared-mxf-by-output] [--topology-watch-file FILE --topology-revision N] [--shutdown-watch-file FILE]\n");
+        g_printerr("Usage multi: recorder-host --bind-ip IP --rtsp-port PORT --session-map sessions.tsv --audit audit.jsonl --plugin-dll gstmxfidentity.dll [--ready-file FILE] [--recorder-id ID] [--max-seconds N] [--rotate-window-after-pauses N --rotate-window-max-count N] [--shared-mxf-by-output | --event-files --recording-root DIR] [--topology-watch-file FILE --topology-revision N] [--shutdown-watch-file FILE]\n");
         g_printerr("Legacy single-session arguments from Phase 3/4 remain supported when --session-map is omitted.\n");
         return 2;
     }
