@@ -185,6 +185,24 @@ mxf_alaw_write_func (GstBuffer * buffer, gpointer mapping_data,
 
   bytes = speu * md->channels;
 
+  /*
+   * Recorder extension: preserve sparse-track time without fabricating
+   * A-law samples. A GAP buffer represents one structural edit unit with
+   * zero essence payload. mxfmux will still advance pad->pos and emit the
+   * corresponding zero-length KLV element, allowing sibling tracks with
+   * real media to progress independently.
+   */
+  if (buffer && GST_BUFFER_FLAG_IS_SET (buffer, GST_BUFFER_FLAG_GAP)) {
+    GstBuffer *gap = gst_buffer_new ();
+    GST_BUFFER_PTS (gap) = GST_BUFFER_PTS (buffer);
+    GST_BUFFER_DTS (gap) = GST_BUFFER_DTS (buffer);
+    GST_BUFFER_DURATION (gap) = GST_BUFFER_DURATION (buffer);
+    GST_BUFFER_FLAG_SET (gap, GST_BUFFER_FLAG_GAP);
+    *outbuf = gap;
+    gst_buffer_unref (buffer);
+    return GST_FLOW_OK;
+  }
+
   if (buffer)
     gst_adapter_push (adapter, buffer);
 
