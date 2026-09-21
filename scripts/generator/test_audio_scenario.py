@@ -79,6 +79,33 @@ class ToneScenarioTests(unittest.TestCase):
             self.assertEqual(burst["on_ms"] % 100, 0)
             self.assertEqual(burst["off_ms"] % 100, 0)
 
+    def test_random_zero_gap_has_no_phantom_silence(self) -> None:
+        resolved = resolve_scenario({
+            "schema": "audio-system.tone-scenario.v1",
+            "duration_ms": 1000,
+            "seed": 99,
+            "tracks": [{
+                "id": "a",
+                "mode": "random_pulsed",
+                "frequency_hz": 700,
+                "random_start": {"min_ms": 0, "max_ms": 0},
+                "random_on": {"min_ms": 200, "max_ms": 200},
+                "random_off": {"min_ms": 0, "max_ms": 0},
+            }],
+        })
+        track = resolved["tracks"][0]
+        self.assertEqual(
+            track["expected_intervals"],
+            [
+                {"start_ms": 0, "end_ms": 200, "duration_ms": 200},
+                {"start_ms": 200, "end_ms": 400, "duration_ms": 200},
+                {"start_ms": 400, "end_ms": 600, "duration_ms": 200},
+                {"start_ms": 600, "end_ms": 800, "duration_ms": 200},
+                {"start_ms": 800, "end_ms": 1000, "duration_ms": 200},
+            ],
+        )
+        self.assertTrue(all(item["off_ms"] == 0 for item in track["bursts"]))
+
     def test_one_frequency_can_target_multiple_tracks(self) -> None:
         resolved = resolve_scenario({
             "schema": "audio-system.tone-scenario.v1",
