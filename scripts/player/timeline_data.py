@@ -1,6 +1,7 @@
-"""Observed timeline data from the temporal index and closed operational MXFs.
+"""Observed timeline data from finalized and read-safe growing Recorder MXFs.
 
-Audit intervals are useful for navigation but are not an indexed evidence chain.
+Open-file intervals stop at the recorder-published watermark. They are useful
+for near-live presentation but are not a finalized/indexed evidence chain.
 """
 
 from __future__ import annotations
@@ -49,7 +50,7 @@ def _growing_mxf_state(run: Path, track_state: dict) -> dict | None:
         if not allowed:
             return None
         timeline_origin = parse_utc(str(lock.get("timeline_origin_utc") or lock["recording_window_start_utc"]))
-        confirmed_end = timeline_origin + timedelta(microseconds=committed_position_ns / 1000)
+        confirmed_end = timeline_origin + timedelta(microseconds=committed_position_ns // 1000)
         return {
             "partial": partial,
             "lock": lock_path,
