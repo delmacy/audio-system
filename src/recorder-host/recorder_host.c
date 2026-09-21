@@ -131,6 +131,8 @@ typedef struct HostConfig {
     int rotate_window_after_pauses;
     int rotate_window_max_count;
     int shared_mxf_by_output;
+    char topology_watch_file[4096];
+    unsigned long long topology_revision;
 } HostConfig;
 
 struct SharedMuxGroup {
@@ -453,6 +455,10 @@ static int parse_host_config(int argc, char **argv, RecorderHost *host) {
     host->cfg.rotate_window_after_pauses = atoi((v = arg_value(argc, argv, "--rotate-window-after-pauses")) ? v : "0");
     host->cfg.rotate_window_max_count = atoi((v = arg_value(argc, argv, "--rotate-window-max-count")) ? v : "0");
     host->cfg.shared_mxf_by_output = has_arg(argc, argv, "--shared-mxf-by-output");
+    safe_copy(host->cfg.topology_watch_file, sizeof(host->cfg.topology_watch_file),
+        (v = arg_value(argc, argv, "--topology-watch-file")) ? v : "");
+    host->cfg.topology_revision = _strtoui64(
+        (v = arg_value(argc, argv, "--topology-revision")) ? v : "0", NULL, 10);
     if (!host->cfg.audit_path[0] || !host->cfg.plugin_dll[0]) return 0;
     if (host->cfg.rtsp_port < 1 || host->cfg.rtsp_port > 65535 || host->cfg.max_seconds < 1) return 0;
     if (host->cfg.session_map_path[0]) return load_session_map(host, host->cfg.session_map_path);
@@ -1637,6 +1643,34 @@ static void write_ready_file(RecorderHost *host) {
     fclose(fp);
 }
 
+static unsigned long long unix_time_ms(void) {
+    FILETIME ft;
+    ULARGE_INTEGER value;
+    const unsigned long long EPOCH_DIFF_100NS = 116444736000000000ULL;
+    GetSystemTimeAsFileTime(&ft);
+    value.LowPart = ft.dwLowDateTime;
+    value.HighPart = ft.dwHighDateTime;
+    if (value.QuadPart <= EPOCH_DIFF_100NS) return 0;
+    return (value.QuadPart - EPOCH_DIFF_100NS) / 10000ULL;
+}
+
+static int topology_change_due(RecorderHost *host, unsigned long long *revision_out) {
+    FILE *fp;
+    unsigned long long revision = 0, effective_ms = 0;
+    if (!host || !host->cfg.topology_watch_file[0]) return 0;
+    fp = fopen(host->cfg.topology_watch_file, "rb");
+    if (!fp) return 0;
+    if (fscanf(fp, "%llu\t%llu", &revision, &effective_ms) != 2) {
+        fclose(fp);
+        return 0;
+    }
+    fclose(fp);
+    if (revision <= host->cfg.topology_revision) return 0;
+    if (unix_time_ms() < effective_ms) return 0;
+    if (revision_out) *revision_out = revision;
+    return 1;
+}
+
 static int run_server(RecorderHost *host) {
     ULONGLONG started = GetTickCount64();
     int timeout_finalization_started = 0;
@@ -1723,6 +1757,22 @@ static int run_server(RecorderHost *host) {
             }
         }
         if (all_sessions_finalized(host)) host->shutdown_requested = 1;
+        if (!timeout_finalization_started && host->cfg.shared_mxf_by_output) {
+            unsigned long long requested_revision = 0;
+            if (topology_change_due(host, &requested_revision)) {
+                char detail[256];
+                timeout_finalization_started = 1;
+                snprintf(detail, sizeof(detail),
+                    "Topology revision changed current=%llu requested=%llu; closing shared MXF window",
+                    host->cfg.topology_revision, requested_revision);
+                audit_event(host, NULL, "TOPOLOGY_CHANGE_ROTATION", detail);
+                for (i = 0; i < host->session_count; i++) {
+                    if (!host->sessions[i].finalized && host->sessions[i].finalize_state == 0) {
+                        begin_finalize_session(&host->sessions[i], "Topology change requested shared MXF rollover");
+                    }
+                }
+            }
+        }
         if (!timeout_finalization_started && (int)((GetTickCount64() - started) / 1000) >= host->cfg.max_seconds) {
             timeout_finalization_started = 1;
             audit_event(host, NULL,
@@ -1859,7 +1909,7 @@ int main(int argc, char **argv) {
     gst_init(&argc, &argv);
     if (has_arg(argc, argv, "selftest") || (argc > 1 && strcmp(argv[1], "selftest") == 0)) return selftest(argc, argv);
     if (!parse_host_config(argc, argv, &host)) {
-        g_printerr("Usage multi: recorder-host --bind-ip IP --rtsp-port PORT --session-map sessions.tsv --audit audit.jsonl --plugin-dll gstmxfidentity.dll [--ready-file FILE] [--recorder-id ID] [--max-seconds N] [--rotate-window-after-pauses N --rotate-window-max-count N] [--shared-mxf-by-output]\n");
+        g_printerr("Usage multi: recorder-host --bind-ip IP --rtsp-port PORT --session-map sessions.tsv --audit audit.jsonl --plugin-dll gstmxfidentity.dll [--ready-file FILE] [--recorder-id ID] [--max-seconds N] [--rotate-window-after-pauses N --rotate-window-max-count N] [--shared-mxf-by-output] [--topology-watch-file FILE --topology-revision N]\n");
         g_printerr("Legacy single-session arguments from Phase 3/4 remain supported when --session-map is omitted.\n");
         return 2;
     }
