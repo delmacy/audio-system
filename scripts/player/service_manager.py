@@ -123,6 +123,12 @@ def _external_running(name: str) -> bool:
 def start_service(name: str) -> dict:
     if name not in SERVICE_ORDER:
         raise ValueError(f"Unknown service: {name}")
+    if name == "recorder":
+        stop_signal = ROOT / "runs" / "operational-recorder" / "stop.signal"
+        try:
+            stop_signal.unlink(missing_ok=True)
+        except OSError:
+            pass
 
     registry = _load_registry()
     services = registry["services"]
@@ -203,6 +209,10 @@ def _kill_tree(pid: int) -> None:
 def stop_service(name: str) -> dict:
     if name not in SERVICE_ORDER:
         raise ValueError(f"Unknown service: {name}")
+    if name == "recorder":
+        stop_signal = ROOT / "runs" / "operational-recorder" / "stop.signal"
+        stop_signal.parent.mkdir(parents=True, exist_ok=True)
+        stop_signal.write_text(_utc_now() + "\n", encoding="utf-8")
     registry = _load_registry()
     services = registry["services"]
     current = services.get(name, {})

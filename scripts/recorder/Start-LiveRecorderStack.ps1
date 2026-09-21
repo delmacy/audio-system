@@ -7,8 +7,11 @@ $root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $start = Join-Path $PSScriptRoot 'Start-RecorderLab.ps1'
 $indexer = Join-Path $root 'scripts\player\recorder_index.py'
 $completed = 0
+$stopSignal = Join-Path $root 'runs\operational-recorder\stop.signal'
+if (Test-Path -LiteralPath $stopSignal) { Remove-Item -LiteralPath $stopSignal -Force }
 
 while ($Cycles -eq 0 -or $completed -lt $Cycles) {
+  if (Test-Path -LiteralPath $stopSignal) { break }
   try {
     & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $start -MaxSeconds 28800 | Out-Null
 
@@ -19,6 +22,7 @@ while ($Cycles -eq 0 -or $completed -lt $Cycles) {
 
     $proc = Get-Process -Id ([int]$state.pid) -ErrorAction SilentlyContinue
     if ($proc) { Wait-Process -Id $proc.Id }
+    if (Test-Path -LiteralPath $stopSignal) { break }
 
     $indexJson = & python $indexer ingest --manifest ([string]$state.topology_manifest) --audit ([string]$state.audit)
     if ($LASTEXITCODE -ne 0) { throw 'Falha ao indexar janela MXF fechada.' }
@@ -32,5 +36,7 @@ while ($Cycles -eq 0 -or $completed -lt $Cycles) {
     Add-Content -LiteralPath (Join-Path $root 'runs\operational-recorder\live-supervisor-errors.log') -Value "$(Get-Date -Format o) $($_.Exception.Message)"
   }
 
+  if (Test-Path -LiteralPath $stopSignal) { break }
   Start-Sleep -Milliseconds $RestartDelayMs
 }
+if (Test-Path -LiteralPath $stopSignal) { Remove-Item -LiteralPath $stopSignal -Force -ErrorAction SilentlyContinue }
