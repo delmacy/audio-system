@@ -26,24 +26,24 @@ SEED_CWPS = [
     ("CWP-B02", "10.20.2.102", "B"),
 ]
 
-SEED_GATEWAY = (
-    "Gateway SIP/RTSP Local",
-    "10.10.0.20",
-    5060,
-    "rtsp://10.10.0.10:8554",
-)
+LEGACY_SEED_GATEWAY = {
+    "label": "Gateway SIP/RTSP Local",
+    "ip": "10.10.0.20",
+    "sip_port": 5060,
+    "rtsp_base_url": "rtsp://10.10.0.10:8554",
+}
 
-SEED_SERVICES = [
-    ("RADIO", "TWR-SIM 121.500", "sip:twr-sim-121500@10.10.0.20:5060"),
-    ("RADIO", "TWR-SIM 118.700", "sip:twr-sim-118700@10.10.0.20:5060"),
-    ("RADIO", "APP-SIM 125.800", "sip:app-sim-125800@10.10.0.20:5060"),
-    ("RADIO", "APP-SIM 127.300", "sip:app-sim-127300@10.10.0.20:5060"),
-    ("RADIO", "GND-SIM 121.900", "sip:gnd-sim-121900@10.10.0.20:5060"),
-    ("TEL", "TEL-SIM-050", "sip:sim-a01-t1@10.10.0.20:5060"),
-    ("TEL", "TEL-SIM-051", "sip:sim-a02-t1@10.10.0.20:5060"),
-    ("TEL", "TEL-SIM-060", "sip:sim-b01-t1@10.10.0.20:5060"),
-    ("TEL", "TEL-SIM-061", "sip:sim-b02-t1@10.10.0.20:5060"),
-]
+LEGACY_SEED_SERVICE_LABELS = (
+    "TWR-SIM 121.500",
+    "TWR-SIM 118.700",
+    "APP-SIM 125.800",
+    "APP-SIM 127.300",
+    "GND-SIM 121.900",
+    "TEL-SIM-050",
+    "TEL-SIM-051",
+    "TEL-SIM-060",
+    "TEL-SIM-061",
+)
 
 
 def utc_now() -> str:
@@ -139,50 +139,46 @@ def initialize() -> None:
                     (str(uuid.uuid4()), label, ip, side, now, now),
                 )
 
-        if con.execute("SELECT COUNT(*) FROM sip_gateway").fetchone()[0] == 0:
-            now = utc_now()
-            con.execute(
+        cleanup_key = "migration.cleanup_legacy_rps_services.v1"
+        cleanup_done = con.execute(
+            "SELECT value FROM system_setting WHERE key=?",
+            (cleanup_key,),
+        ).fetchone()
+        if not cleanup_done:
+            gateway = con.execute(
                 """
-                INSERT INTO sip_gateway(id,label,ip,sip_port,rtsp_base_url,enabled,created_at,updated_at)
-                VALUES(?,?,?,?,?,1,?,?)
+                SELECT id FROM sip_gateway
+                WHERE label=? AND ip=? AND sip_port=? AND rtsp_base_url=?
                 """,
-                (str(uuid.uuid4()), *SEED_GATEWAY, now, now),
+                (
+                    LEGACY_SEED_GATEWAY["label"],
+                    LEGACY_SEED_GATEWAY["ip"],
+                    LEGACY_SEED_GATEWAY["sip_port"],
+                    LEGACY_SEED_GATEWAY["rtsp_base_url"],
+                ),
+            ).fetchone()
+
+            if gateway:
+                gateway_id = str(gateway["id"])
+                placeholders = ",".join("?" for _ in LEGACY_SEED_SERVICE_LABELS)
+                con.execute(
+                    f"""
+                    DELETE FROM service
+                    WHERE gateway_id=? AND label IN ({placeholders})
+                    """,
+                    (gateway_id, *LEGACY_SEED_SERVICE_LABELS),
+                )
+                remaining = con.execute(
+                    "SELECT COUNT(*) FROM service WHERE gateway_id=?",
+                    (gateway_id,),
+                ).fetchone()[0]
+                if remaining == 0:
+                    con.execute("DELETE FROM sip_gateway WHERE id=?", (gateway_id,))
+
+            con.execute(
+                "INSERT INTO system_setting(key,value) VALUES(?,?)",
+                (cleanup_key, utc_now()),
             )
-
-        gateway_id = str(con.execute("SELECT id FROM sip_gateway ORDER BY created_at LIMIT 1").fetchone()["id"])
-
-        if con.execute("SELECT COUNT(*) FROM service").fetchone()[0] == 0:
-            now = utc_now()
-            for kind, label, _legacy_uri in SEED_SERVICES:
-                try:
-                    sip_user = _service_sip_user(label)
-                    gateway = con.execute(
-                        "SELECT ip,sip_port FROM sip_gateway WHERE id=?",
-                        (gateway_id,),
-                    ).fetchone()
-                    sip_uri = f"sip:{sip_user}@{gateway['ip']}:{int(gateway['sip_port'])}"
-                    con.execute(
-                        """
-                        INSERT INTO service(id,kind,label,endpoint,sip_uri,gateway_id,enabled,created_at,updated_at)
-                        VALUES(?,?,?,?,?,?,1,?,?)
-                        """,
-                        (str(uuid.uuid4()), kind, label, sip_uri, sip_uri, gateway_id, now, now),
-                    )
-                except ValueError:
-                    pass
-        else:
-            # Migrate existing services to the current RPS-derived SIP addressing rule.
-            rows = con.execute("SELECT id,label,gateway_id FROM service").fetchall()
-            for row in rows:
-                selected_gateway = str(row["gateway_id"]) if row["gateway_id"] else gateway_id
-                try:
-                    sip_uri, selected_gateway = _service_sip_uri(con, str(row["label"]), selected_gateway)
-                    con.execute(
-                        "UPDATE service SET endpoint=?,sip_uri=?,gateway_id=? WHERE id=?",
-                        (sip_uri, sip_uri, selected_gateway, str(row["id"])),
-                    )
-                except ValueError:
-                    pass
 
 
 def _setting(con: sqlite3.Connection, key: str) -> str:
@@ -500,7 +496,7 @@ def delete_gateway(record_id: str) -> None:
     with connect() as con:
         used = con.execute("SELECT COUNT(*) FROM service WHERE gateway_id=?", (record_id,)).fetchone()[0]
         if used:
-            raise ValueError("Gateway is in use by one or more radio services")
+            raise ValueError("RPS is in use by one or more SIP services")
         cursor = con.execute("DELETE FROM sip_gateway WHERE id=?", (record_id,))
         if cursor.rowcount == 0:
             raise LookupError("Gateway not found")
