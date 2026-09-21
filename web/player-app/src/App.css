@@ -1594,3 +1594,11 @@ button:focus-visible,input:focus-visible,select:focus-visible,[role=slider]:focu
     flex-direction:column;
   }
 }
+
+
+.rep-cwp-thumb-ip{
+  font-family:ui-monospace,SFMono-Regular,Consolas,monospace;
+  font-size:9px;
+  font-weight:700;
+  color:#4f7091;
+}

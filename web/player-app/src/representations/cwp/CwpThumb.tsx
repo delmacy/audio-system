@@ -16,6 +16,7 @@ export function CwpThumb({ cwp, mode }: {
     <button type="button" className="rep-cwp-thumb rep-cwp-thumb-trigger" onClick={() => setOpen(true)}>
       <span className="rep-thumb-icon"><Monitor size={22} /></span>
       <strong>{cwp.label}</strong>
+      <small className="rep-cwp-thumb-ip">IP {config.consoleIp}</small>
       <small>Lado {cwp.side} · {radios.length} rádios · {telephones.length} TEL</small>
       <span><i className="status-dot" />Online</span>
     </button>
