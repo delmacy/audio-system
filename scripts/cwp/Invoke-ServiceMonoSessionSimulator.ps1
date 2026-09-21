@@ -25,7 +25,7 @@ param(
     [string]$InitialAudioEvent = '',
     [string]$MediaStartUtc = '',
     [int]$AnswerAfterMs = -1,
-    [bool]$PauseAfterBurst = $true,
+    [switch]$NoPauseAfterBurst,
     [switch]$SendHangupEvent
 )
 Set-StrictMode -Version Latest
@@ -173,7 +173,7 @@ try {
             Start-Sleep -Milliseconds 20
         }
         $executedBursts++
-        if ($PauseAfterBurst) {
+        if (-not $NoPauseAfterBurst) {
             $resp = Send-RtspRequest $client ("PAUSE $uri RTSP/1.0`r`nCSeq: $cseq`r`nSession: $session`r`n`r`n"); $cseq++
             for($q=0;$q -lt $PausedProbePackets;$q++){
                 $pkt = New-RtpPacket -Seq $seq -Timestamp $ts -Payload $payload
