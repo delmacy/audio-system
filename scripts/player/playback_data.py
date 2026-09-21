@@ -13,7 +13,7 @@ import shutil
 import struct
 import subprocess
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -135,9 +135,7 @@ def _load_growing_candidate(run: Path, track: dict, events: list[dict],
             return None
         flushed_bytes = min(flushed_bytes, partial.stat().st_size)
         window_start = parse_utc(str(lock["recording_window_start_utc"]))
-        confirmed_end = window_start + (datetime.fromtimestamp(
-            committed_position_ns / 1_000_000_000, tz=timezone.utc
-        ) - datetime.fromtimestamp(0, tz=timezone.utc))
+        confirmed_end = window_start + timedelta(microseconds=committed_position_ns / 1000)
         if not _range_overlaps(window_start, confirmed_end, from_utc, to_utc):
             return None
         matching = _matching_events(track, events)
@@ -225,6 +223,8 @@ def build_operational_plan(logical_track_uuid: str, from_utc: str | None = None,
     natural_to = parse_utc(intervals[-1]["end_utc"])
     start = parse_utc(from_utc) if from_utc else natural_from
     end = parse_utc(to_utc) if to_utc else natural_to
+    if resolved.get("open") and resolved.get("confirmed_until_utc"):
+        end = min(end, parse_utc(resolved["confirmed_until_utc"]))
     if end <= start:
         raise ValueError("to must be greater than from")
     if (end - start).total_seconds() > MAX_WINDOW_SECONDS:
