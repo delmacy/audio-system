@@ -32,9 +32,17 @@ type ApiService = {
   enabled: boolean
 }
 
+type NetworkConfig = {
+  network: string
+  start: string
+  end: string
+  allocation: string
+  next_cwp_ip: string
+}
+
 type ConfigPayload = {
   schema: string
-  network: { allocation: string; next_cwp_ip: string }
+  network: NetworkConfig
   cwps: ApiCwp[]
   gateways: ApiRps[]
   services: ApiService[]
@@ -74,12 +82,17 @@ export function ServiceRegistryView() {
   const [error, setError] = useState('')
 
   const [cwpFormOpen, setCwpFormOpen] = useState(false)
+  const [networkFormOpen, setNetworkFormOpen] = useState(false)
+  const [renewConfirmOpen, setRenewConfirmOpen] = useState(false)
   const [serviceFormOpen, setServiceFormOpen] = useState(false)
   const [rpsFormOpen, setRpsFormOpen] = useState(false)
 
   const [cwpLabel, setCwpLabel] = useState('')
   const [cwpIp, setCwpIp] = useState('')
   const [cwpSide, setCwpSide] = useState<'A' | 'B'>('A')
+  const [networkCidr, setNetworkCidr] = useState('10.20.1.0/24')
+  const [networkStart, setNetworkStart] = useState('10.20.1.101')
+  const [networkEnd, setNetworkEnd] = useState('10.20.1.254')
 
   const [serviceKind, setServiceKind] = useState<'RADIO' | 'TEL'>('RADIO')
   const [serviceLabel, setServiceLabel] = useState('')
@@ -129,6 +142,9 @@ export function ServiceRegistryView() {
       setRpsList(payload.gateways ?? [])
       setServices(payload.services)
       setNextIp(payload.network.next_cwp_ip)
+      setNetworkCidr(payload.network.network)
+      setNetworkStart(payload.network.start)
+      setNetworkEnd(payload.network.end)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Falha ao carregar configuração.')
     } finally {
@@ -148,6 +164,46 @@ export function ServiceRegistryView() {
       setNextIp(payload.ip)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Falha ao consultar próximo IP.')
+    }
+  }
+
+  const saveNetworkConfig = async () => {
+    if (!networkCidr.trim() || !networkStart.trim() || !networkEnd.trim()) return
+    setSaving(true)
+    setError('')
+    try {
+      await responseJson(await fetch('/api/network/config', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({
+          network: networkCidr.trim(),
+          start: networkStart.trim(),
+          end: networkEnd.trim(),
+        }),
+      }))
+      setNetworkFormOpen(false)
+      await load()
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Falha ao salvar faixa de IP.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const renewIps = async () => {
+    setRenewConfirmOpen(false)
+    setSaving(true)
+    setError('')
+    try {
+      await responseJson(await fetch('/api/network/renew-ips', {
+        method: 'POST',
+        headers: { Accept: 'application/json' },
+      }))
+      await load()
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Falha ao renovar IPs.')
+    } finally {
+      setSaving(false)
     }
   }
 
@@ -355,9 +411,22 @@ export function ServiceRegistryView() {
 
     <section className="registry-section">
       <header>
-        <div><span className="registry-section-icon"><Monitor size={17} /></span><div><strong>CWP</strong><small>Consoles persistidos no banco</small></div></div>
-        <button type="button" className="registry-add-button" onClick={() => void openCwpForm()}><Plus size={16} />Incluir CWP</button>
+        <div><span className="registry-section-icon"><Monitor size={17} /></span><div><strong>CWP</strong><small>Faixa atual: {networkStart} → {networkEnd}</small></div></div>
+        <div className="registry-header-actions">
+          <button type="button" className="registry-secondary-button" onClick={() => setNetworkFormOpen(value => !value)}>Configurar faixa</button>
+          <button type="button" className="registry-secondary-button renew" onClick={() => setRenewConfirmOpen(true)} disabled={saving}><RefreshCw size={14} />Renovar IPs</button>
+          <button type="button" className="registry-add-button" onClick={() => void openCwpForm()}><Plus size={16} />Incluir CWP</button>
+        </div>
       </header>
+      {networkFormOpen && <div className="registry-network-form">
+        <label>Rede / CIDR<input value={networkCidr} onChange={event => setNetworkCidr(event.target.value)} placeholder="10.20.1.0/24" /></label>
+        <label>Primeiro IP<input value={networkStart} onChange={event => setNetworkStart(event.target.value)} placeholder="10.20.1.101" /></label>
+        <label>Último IP<input value={networkEnd} onChange={event => setNetworkEnd(event.target.value)} placeholder="10.20.1.254" /></label>
+        <div>
+          <button type="button" onClick={() => setNetworkFormOpen(false)}>Cancelar</button>
+          <button type="button" className="primary" onClick={() => void saveNetworkConfig()} disabled={saving}>Salvar faixa</button>
+        </div>
+      </div>}
       {cwpFormOpen && <div className="registry-inline-form">
         <label>Nome<input value={cwpLabel} onChange={event => setCwpLabel(event.target.value)} placeholder="CWP-003" /></label>
         <label>IP<input value={cwpIp} onChange={event => setCwpIp(event.target.value)} placeholder={nextIp ? 'Auto: ' + nextIp : 'Automático'} /><small>Vazio = próximo IP livre.</small></label>
@@ -468,6 +537,21 @@ export function ServiceRegistryView() {
           <label>URI SIP gerada<input value={editServiceSipPreview} readOnly placeholder="Será gerada automaticamente" /></label>
         </div>
         <footer><button type="button" onClick={() => setEditingService(null)}>Cancelar</button><button type="button" className="primary" disabled={!editServiceLabel.trim() || !editServiceRpsId || !deriveSipUser(editServiceLabel)} onClick={() => void saveServiceEdit()}>Salvar alterações</button></footer>
+      </section>
+    </div>}
+
+    {renewConfirmOpen && <div className="registry-modal-backdrop" onMouseDown={() => setRenewConfirmOpen(false)}>
+      <section className="registry-modal registry-confirm-modal" onMouseDown={event => event.stopPropagation()}>
+        <div className="registry-confirm-icon network"><RefreshCw size={24} /></div>
+        <div>
+          <span>Renovar endereçamento</span>
+          <h2>Renovar IPs de todos os CWP?</h2>
+          <p>Todos os endereços manuais serão substituídos pela sequência automática da faixa {networkStart} → {networkEnd}. Todos os CWP voltarão para AUTO IP.</p>
+        </div>
+        <footer>
+          <button type="button" onClick={() => setRenewConfirmOpen(false)}>Cancelar</button>
+          <button type="button" className="primary" disabled={saving} onClick={() => void renewIps()}>Renovar todos os IPs</button>
+        </footer>
       </section>
     </div>}
 

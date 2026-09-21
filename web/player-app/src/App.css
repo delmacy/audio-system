@@ -2130,3 +2130,44 @@ button:focus-visible,input:focus-visible,select:focus-visible,[role=slider]:focu
 @media(max-width:1100px){
   .registry-inline-form.gateway,.registry-inline-form.sip-service{grid-template-columns:1fr 1fr}
 }
+
+
+.registry-header-actions{display:flex;align-items:center;gap:7px}
+.registry-secondary-button{
+  min-height:32px;
+  display:flex;
+  align-items:center;
+  gap:6px;
+  border:1px solid #d6e2ed;
+  border-radius:7px;
+  background:#fff;
+  color:#587089;
+  padding:0 10px;
+  font-size:9px;
+  font-weight:750;
+}
+.registry-secondary-button.renew{color:#176ebc;background:#f5faff;border-color:#bdd8ef}
+.registry-network-form{
+  display:grid;
+  grid-template-columns:1.1fr 1fr 1fr auto;
+  align-items:end;
+  gap:9px;
+  padding:12px 14px;
+  border-bottom:1px solid #e5ecf3;
+  background:#f8fbff;
+}
+.registry-network-form label{display:grid;gap:4px;font-size:8px;font-weight:700;color:#61758b}
+.registry-network-form input{
+  height:34px;border:1px solid #d5e1ec;border-radius:7px;background:#fff;padding:0 9px;color:#2d465f;font-size:10px
+}
+.registry-network-form>div{display:flex;gap:6px}
+.registry-network-form button{
+  height:34px;border:1px solid #d5e1ec;border-radius:7px;background:#fff;padding:0 10px;color:#5d7187;font-size:9px;font-weight:700
+}
+.registry-network-form button.primary{background:#1473db;border-color:#1473db;color:#fff}
+.registry-confirm-icon.network{background:#eef7ff;color:#287ac4}
+.registry-confirm-modal>footer button.primary{border-color:#1473db;background:#1473db;color:#fff}
+@media(max-width:1000px){
+  .registry-header-actions{flex-wrap:wrap;justify-content:flex-end}
+  .registry-network-form{grid-template-columns:1fr 1fr}
+}
