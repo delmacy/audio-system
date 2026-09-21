@@ -307,7 +307,7 @@ try {
     ) | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
     if (-not $lab) { throw 'mxf-lab.exe was not built.' }
 
-    & $lab inspect $final '--expected-tracks' '3' '--timeout-ms' '15000'
+    & $lab inspect $final '--expected-tracks' '3' '--timeout-ms' '15000' '--expected-alaw-8k-mono'
     if ($LASTEXITCODE -ne 0) { throw 'Final shared MXF structural inspection failed.' }
 
     Write-Host ('GROWING MXF E2E: PASS first_generation={0} second_generation={1} first_ns={2} second_ns={3} final={4}' -f
