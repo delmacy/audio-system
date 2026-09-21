@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ipaddress
+import json
 import re
 import sqlite3
 import uuid
@@ -17,6 +18,9 @@ DEFAULT_SETTINGS = {
     "cwp_pool_network": "10.20.1.0/24",
     "cwp_pool_start": "10.20.1.101",
     "cwp_pool_end": "10.20.1.254",
+    "recording_rotation_minutes": "60",
+    "topology_change_guard_seconds": "5",
+    "topology_revision": "0",
 }
 
 SEED_CWPS = [
@@ -188,6 +192,64 @@ def _setting(con: sqlite3.Connection, key: str) -> str:
     return str(row["value"])
 
 
+
+def get_topology_revision() -> int:
+    initialize()
+    with connect() as con:
+        return int(_setting(con, "topology_revision"))
+
+
+def _next_rotation_boundary(now: datetime, rotation_minutes: int) -> datetime:
+    period = max(1, int(rotation_minutes)) * 60
+    epoch = int(now.timestamp())
+    next_epoch = ((epoch // period) + 1) * period
+    return datetime.fromtimestamp(next_epoch, tz=timezone.utc)
+
+
+def mark_topology_changed(reason: str) -> dict:
+    initialize()
+    now = datetime.now(timezone.utc)
+    with connect() as con:
+        revision = int(_setting(con, "topology_revision")) + 1
+        rotation_minutes = int(_setting(con, "recording_rotation_minutes"))
+        guard_seconds = int(_setting(con, "topology_change_guard_seconds"))
+        con.execute(
+            "UPDATE system_setting SET value=? WHERE key='topology_revision'",
+            (str(revision),),
+        )
+
+    boundary = _next_rotation_boundary(now, rotation_minutes)
+    seconds_to_boundary = max(0.0, (boundary - now).total_seconds())
+    effective = boundary if seconds_to_boundary <= guard_seconds else now
+
+    signal_dir = ROOT / "runs" / "operational-recorder"
+    signal_dir.mkdir(parents=True, exist_ok=True)
+    signal_path = signal_dir / "topology-change.signal"
+    signal_path.write_text(
+        f"{revision}\t{int(effective.timestamp() * 1000)}\n",
+        encoding="utf-8",
+    )
+    detail_path = signal_dir / "topology-change-request.json"
+    detail_path.write_text(
+        json.dumps({
+            "schema": "audio-system.topology-change.v1",
+            "revision": revision,
+            "reason": reason,
+            "requested_utc": utc_now(),
+            "effective_utc": effective.isoformat(timespec="milliseconds").replace("+00:00", "Z"),
+            "next_boundary_utc": boundary.isoformat(timespec="milliseconds").replace("+00:00", "Z"),
+            "seconds_to_boundary": seconds_to_boundary,
+            "guard_seconds": guard_seconds,
+            "deferred_to_boundary": effective == boundary,
+        }, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    return {
+        "revision": revision,
+        "effective_utc": effective.isoformat(timespec="milliseconds").replace("+00:00", "Z"),
+        "deferred_to_boundary": effective == boundary,
+    }
+
 def get_network_config() -> dict:
     initialize()
     with connect() as con:
@@ -356,6 +418,7 @@ def create_cwp(label: str, side: str, ip: str | None = None) -> dict:
         if "cwp.ip" in text:
             raise ValueError(f"CWP IP already exists: {assigned_ip}") from exc
         raise
+    mark_topology_changed("cwp_created")
     return get_cwp(record_id)
 
 
@@ -390,6 +453,7 @@ def update_cwp(record_id: str, label: str, side: str, ip: str) -> dict:
                 raise LookupError("CWP not found")
     except sqlite3.IntegrityError as exc:
         raise ValueError("CWP label or IP already exists") from exc
+    mark_topology_changed("cwp_updated")
     return get_cwp(record_id)
 
 
@@ -399,6 +463,7 @@ def delete_cwp(record_id: str) -> None:
         cursor = con.execute("DELETE FROM cwp WHERE id=?", (record_id,))
         if cursor.rowcount == 0:
             raise LookupError("CWP not found")
+    mark_topology_changed("cwp_deleted")
 
 
 def list_gateways() -> list[dict]:
@@ -572,6 +637,7 @@ def create_service(kind: str, label: str, gateway_id: str | None = None) -> dict
             )
     except sqlite3.IntegrityError as exc:
         raise ValueError("Service label or SIP URI already exists") from exc
+    mark_topology_changed("service_created")
     return get_service(record_id)
 
 
@@ -599,6 +665,7 @@ def update_service(record_id: str, kind: str, label: str, gateway_id: str | None
                 raise LookupError("Service not found")
     except sqlite3.IntegrityError as exc:
         raise ValueError("Service label or SIP URI already exists") from exc
+    mark_topology_changed("service_updated")
     return get_service(record_id)
 
 
@@ -608,6 +675,7 @@ def delete_service(record_id: str) -> None:
         cursor = con.execute("DELETE FROM service WHERE id=?", (record_id,))
         if cursor.rowcount == 0:
             raise LookupError("Service not found")
+    mark_topology_changed("service_deleted")
 
 
 def configuration_snapshot() -> dict:
@@ -620,6 +688,7 @@ def configuration_snapshot() -> dict:
         "cwps": list_cwps(),
         "gateways": list_gateways(),
         "services": list_services(),
+        "topology_revision": get_topology_revision(),
     }
 
 
