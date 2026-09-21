@@ -34,9 +34,11 @@
   <ItemGroup>
     <ClCompile Include="recorder_host.c" />
     <ClCompile Include="storage_writer.c" />
+    <ClCompile Include="event_file_manager.c" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="storage_writer.h" />
+    <ClInclude Include="event_file_manager.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
 </Project>
