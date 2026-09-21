@@ -201,3 +201,13 @@ jobs:
       - name: Growing MXF read-while-recording E2E
         shell: pwsh
         run: ./scripts/recorder/Invoke-GrowingMxfCiSmoke.ps1
+
+      - name: Upload native E2E diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: growing-mxf-e2e-diagnostics
+          path: |
+            runs/operational-recorder/**
+          if-no-files-found: ignore
+          retention-days: 3
