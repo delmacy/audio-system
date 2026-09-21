@@ -82,6 +82,7 @@ struct RecorderSession {
     unsigned long long rtp_packets_late;
     unsigned long long rtp_payload_bytes_recorded;
     unsigned long long media_samples_written;
+    guint64 shared_timeline_position_ns;
     unsigned long long rtp_sequence_gap_packets;
     unsigned long long rtp_timestamp_discontinuities;
     unsigned long long rtp_timestamp_gap_samples;
@@ -152,6 +153,7 @@ struct SharedMuxGroup {
     GstBus *bus;
     int session_indices[MAX_SESSIONS];
     int session_count;
+    ULONGLONG started_tick_ms;
     unsigned long long mux_bytes_written;
     int sink_error;
     int pipeline_error;
@@ -636,6 +638,7 @@ static int build_shared_groups(RecorderHost *host) {
             }
         }
         group->bus = gst_element_get_bus(group->pipeline);
+        group->started_tick_ms = GetTickCount64();
         state_result = gst_element_set_state(group->pipeline, GST_STATE_PLAYING);
         if (state_result == GST_STATE_CHANGE_FAILURE) return 0;
         g_print("SHARED MXF ARMED category=%s tracks=%d file=%s\n",
@@ -1414,28 +1417,123 @@ static int handle_rtsp_request(RecorderHost *host, ClientConnection *client, cha
     return send_rtsp_response(client->socket, 405, "Method Not Allowed", cseq, session->session_id, NULL);
 }
 
+static guint64 shared_group_now_ns(SharedMuxGroup *group) {
+    ULONGLONG elapsed_ms;
+    if (!group || !group->started_tick_ms) return 0;
+    elapsed_ms = GetTickCount64() - group->started_tick_ms;
+    return ((guint64)elapsed_ms) * GST_MSECOND;
+}
+
+static int push_shared_gap_buffer(RecorderSession *session, guint64 target_ns) {
+    GstBuffer *gap;
+    GstFlowReturn flow = GST_FLOW_ERROR;
+    guint64 start_ns, duration_ns;
+
+    if (!session || !session->appsrc || !session->shared_group) return 0;
+    start_ns = session->shared_timeline_position_ns;
+    if (target_ns <= start_ns) return 1;
+
+    duration_ns = target_ns - start_ns;
+    gap = gst_buffer_new();
+    if (!gap) return 0;
+
+    GST_BUFFER_PTS(gap) = start_ns;
+    GST_BUFFER_DTS(gap) = GST_CLOCK_TIME_NONE;
+    GST_BUFFER_DURATION(gap) = duration_ns;
+    GST_BUFFER_FLAG_SET(gap, GST_BUFFER_FLAG_GAP);
+    GST_BUFFER_FLAG_SET(gap, GST_BUFFER_FLAG_DROPPABLE);
+
+    g_signal_emit_by_name(session->appsrc, "push-buffer", gap, &flow);
+    gst_buffer_unref(gap);
+
+    if (flow != GST_FLOW_OK) return 0;
+    session->shared_timeline_position_ns = target_ns;
+    return 1;
+}
+
+static int advance_idle_shared_tracks(
+    SharedMuxGroup *group,
+    RecorderSession *active,
+    guint64 target_end_ns
+) {
+    int i;
+    if (!group || !group->host) return 0;
+
+    for (i = 0; i < group->session_count; i++) {
+        RecorderSession *candidate =
+            &group->host->sessions[group->session_indices[i]];
+
+        if (candidate == active) continue;
+        if (candidate->finalized) continue;
+
+        /*
+         * A route already under RTSP RECORD is expected to deliver its own RTP.
+         * Do not pre-fill that route with a GAP because a sibling leg of the
+         * same SIP call may arrive a few milliseconds later with real media.
+         */
+        if (candidate->recording) continue;
+
+        if (!push_shared_gap_buffer(candidate, target_end_ns)) {
+            audit_event(candidate->host, candidate, "INTEGRITY_FAILURE",
+                "Could not advance idle shared-MXF track with GAP buffer");
+            candidate->pipeline_error = 1;
+            return 0;
+        }
+    }
+    return 1;
+}
+
 static int push_rtp_payload(RecorderSession *session, const unsigned char *payload, int payload_len, guint32 timestamp) {
     GstBuffer *buffer;
     GstFlowReturn flow = GST_FLOW_ERROR;
     guint32 delta;
+    guint64 pts_ns, duration_ns, end_ns;
+
     if (!session->first_rtp_timestamp_valid) {
         session->first_rtp_timestamp = timestamp;
         session->first_rtp_timestamp_valid = 1;
     }
     delta = timestamp - session->first_rtp_timestamp;
+    duration_ns = gst_util_uint64_scale((guint64)payload_len, GST_SECOND, 8000);
+
+    if (session->shared_group) {
+        /*
+         * Shared MXF uses the window's monotonic clock. This preserves real
+         * temporal gaps between calls/bursts without writing synthetic audio.
+         */
+        pts_ns = shared_group_now_ns(session->shared_group);
+        if (pts_ns < session->shared_timeline_position_ns)
+            pts_ns = session->shared_timeline_position_ns;
+        end_ns = pts_ns + duration_ns;
+
+        /* Advance this sparse track up to the real media start. */
+        if (!push_shared_gap_buffer(session, pts_ns)) return 0;
+
+        /*
+         * Keep completely idle sibling tracks moving past this buffer so the
+         * aggregator/mux never waits forever for an unused configured track.
+         */
+        if (!advance_idle_shared_tracks(session->shared_group, session, end_ns))
+            return 0;
+    } else {
+        pts_ns = gst_util_uint64_scale((guint64)delta, GST_SECOND, 8000);
+        end_ns = pts_ns + duration_ns;
+    }
+
     buffer = gst_buffer_new_allocate(NULL, payload_len, NULL);
     if (!buffer) return 0;
     gst_buffer_fill(buffer, 0, payload, payload_len);
-    if (session->shared_group) {
-        GST_BUFFER_PTS(buffer) = gst_util_uint64_scale((guint64)session->media_samples_written, GST_SECOND, 8000);
-    } else {
-        GST_BUFFER_PTS(buffer) = gst_util_uint64_scale((guint64)delta, GST_SECOND, 8000);
-    }
+    GST_BUFFER_PTS(buffer) = pts_ns;
     GST_BUFFER_DTS(buffer) = GST_CLOCK_TIME_NONE;
-    GST_BUFFER_DURATION(buffer) = gst_util_uint64_scale((guint64)payload_len, GST_SECOND, 8000);
+    GST_BUFFER_DURATION(buffer) = duration_ns;
+
     g_signal_emit_by_name(session->appsrc, "push-buffer", buffer, &flow);
-    if (flow == GST_FLOW_OK && session->shared_group) session->media_samples_written += (unsigned long long)payload_len;
     gst_buffer_unref(buffer);
+
+    if (flow == GST_FLOW_OK && session->shared_group) {
+        session->media_samples_written += (unsigned long long)payload_len;
+        session->shared_timeline_position_ns = end_ns;
+    }
     return flow == GST_FLOW_OK;
 }
 
