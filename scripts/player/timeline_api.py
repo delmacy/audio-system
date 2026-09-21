@@ -8,7 +8,7 @@ from urllib.parse import parse_qs, urlparse
 
 from playback_data import build_operational_plan, render_operational_wav
 from timeline_data import build_timeline
-from config_store import configuration_snapshot, create_cwp, create_service, delete_cwp, delete_service, list_cwps, list_services, next_cwp_ip, update_cwp, update_service
+from config_store import configuration_snapshot, create_cwp, create_gateway, create_service, delete_cwp, delete_gateway, delete_service, list_cwps, list_gateways, list_services, next_cwp_ip, update_cwp, update_gateway, update_service
 
 HOST = "127.0.0.1"
 PORT = 8500
@@ -63,6 +63,7 @@ class Handler(BaseHTTPRequestHandler):
                     "/api/config",
                     "/api/cwps",
                     "/api/services",
+                    "/api/gateways",
                     "/api/network/next-ip",
                     "/api/playback/plan?lt=<uuid>&from=<utc>&to=<utc>",
                     "/api/playback/audio?lt=<uuid>&from=<utc>&to=<utc>",
@@ -93,6 +94,13 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(200, {"services": list_services()})
             except Exception as exc:
                 self._json(500, {"error": "service_list_failed", "detail": str(exc)})
+            return
+
+        if parsed.path == "/api/gateways":
+            try:
+                self._json(200, {"gateways": list_gateways()})
+            except Exception as exc:
+                self._json(500, {"error": "gateway_list_failed", "detail": str(exc)})
             return
 
         if parsed.path == "/api/network/next-ip":
@@ -150,9 +158,19 @@ class Handler(BaseHTTPRequestHandler):
                 item = create_service(
                     kind=str(payload.get("kind", "")),
                     label=str(payload.get("label", "")),
-                    endpoint=str(payload.get("endpoint", "")),
+                    sip_uri=str(payload.get("sip_uri", "")),
+                    gateway_id=str(payload.get("gateway_id")) if payload.get("gateway_id") else None,
                 )
                 self._json(201, {"service": item})
+                return
+            if parsed.path == "/api/gateways":
+                item = create_gateway(
+                    label=str(payload.get("label", "")),
+                    ip=str(payload.get("ip", "")),
+                    sip_port=int(payload.get("sip_port", 5060)),
+                    rtsp_base_url=str(payload.get("rtsp_base_url", "")),
+                )
+                self._json(201, {"gateway": item})
                 return
             self._json(404, {"error": "not_found"})
         except ValueError as exc:
@@ -187,9 +205,23 @@ class Handler(BaseHTTPRequestHandler):
                     record_id=record_id,
                     kind=str(payload.get("kind", "")),
                     label=str(payload.get("label", "")),
-                    endpoint=str(payload.get("endpoint", "")),
+                    sip_uri=str(payload.get("sip_uri", "")),
+                    gateway_id=str(payload.get("gateway_id")) if payload.get("gateway_id") else None,
                 )
                 self._json(200, {"service": item})
+                return
+            if parsed.path.startswith("/api/gateways/"):
+                record_id = parsed.path.removeprefix("/api/gateways/")
+                if not record_id:
+                    raise ValueError("Gateway id is required")
+                item = update_gateway(
+                    record_id=record_id,
+                    label=str(payload.get("label", "")),
+                    ip=str(payload.get("ip", "")),
+                    sip_port=int(payload.get("sip_port", 5060)),
+                    rtsp_base_url=str(payload.get("rtsp_base_url", "")),
+                )
+                self._json(200, {"gateway": item})
                 return
             self._json(404, {"error": "not_found"})
         except ValueError as exc:
@@ -216,6 +248,13 @@ class Handler(BaseHTTPRequestHandler):
                 if not record_id:
                     raise ValueError("Service id is required")
                 delete_service(record_id)
+                self._json(200, {"deleted": True, "id": record_id})
+                return
+            if parsed.path.startswith("/api/gateways/"):
+                record_id = parsed.path.removeprefix("/api/gateways/")
+                if not record_id:
+                    raise ValueError("Gateway id is required")
+                delete_gateway(record_id)
                 self._json(200, {"deleted": True, "id": record_id})
                 return
             self._json(404, {"error": "not_found"})
