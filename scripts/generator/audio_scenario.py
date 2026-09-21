@@ -14,6 +14,9 @@ from pathlib import Path
 from typing import Any
 
 RTP_FRAME_MS = 20
+# The current A-law MXF mapping uses edit_rate 10/1. Scenario boundaries must
+# not split an edit unit; RTP packets inside active intervals remain 20 ms.
+MXF_AUDIO_EDIT_UNIT_MS = 100
 SCHEMA = "audio-system.tone-scenario.v1"
 RESOLVED_SCHEMA = "audio-system.tone-scenario-resolved.v1"
 MODES = {"continuous", "pulsed", "random_pulsed"}
@@ -27,10 +30,10 @@ def _positive_int(value: Any, name: str, *, allow_zero: bool = False) -> int:
     return result
 
 
-def _quantize_ms(value: int, *, minimum: int = RTP_FRAME_MS) -> int:
+def _quantize_ms(value: int, *, minimum: int = MXF_AUDIO_EDIT_UNIT_MS) -> int:
     if value <= 0:
         return 0
-    quantized = int(round(value / RTP_FRAME_MS)) * RTP_FRAME_MS
+    quantized = int(round(value / MXF_AUDIO_EDIT_UNIT_MS)) * MXF_AUDIO_EDIT_UNIT_MS
     return max(minimum, quantized)
 
 
@@ -52,8 +55,8 @@ def _draw_ms(rng: random.Random, bounds: tuple[int, int], *, minimum: int = RTP_
     lo, hi = bounds
     if hi <= lo:
         return max(minimum, lo) if lo > 0 else 0
-    steps = max(0, (hi - lo) // RTP_FRAME_MS)
-    return max(minimum, lo + rng.randint(0, steps) * RTP_FRAME_MS)
+    steps = max(0, (hi - lo) // MXF_AUDIO_EDIT_UNIT_MS)
+    return max(minimum, lo + rng.randint(0, steps) * MXF_AUDIO_EDIT_UNIT_MS)
 
 
 def _resolve_start_offset(track: dict, rng: random.Random) -> int:
@@ -122,7 +125,7 @@ def _random_schedule(
         cursor = after + gap
         if off_ms == 0 and cursor < duration_ms:
             # Prevent an accidental infinite/degenerate zero-gap random sequence.
-            cursor += RTP_FRAME_MS
+            cursor += MXF_AUDIO_EDIT_UNIT_MS
     return bursts, intervals
 
 
@@ -219,7 +222,7 @@ def selftest() -> None:
     assert one == two
     assert one["tracks"][0]["expected_intervals"] == [{"start_ms": 0, "end_ms": 5000, "duration_ms": 5000}]
     assert len(one["tracks"][1]["bursts"]) > 2
-    assert one["tracks"][2]["start_offset_ms"] % RTP_FRAME_MS == 0
+    assert one["tracks"][2]["start_offset_ms"] % MXF_AUDIO_EDIT_UNIT_MS == 0
     assert len(one["tracks"][2]["expected_intervals"]) > 1
     print("TONE SCENARIO SELFTEST: PASS")
 
