@@ -24,6 +24,8 @@
 #define MAX_CLIENTS 128
 #define MAX_SHARED_GROUPS 16
 #define SESSION_MAP_FIELDS 16
+#define LIVE_COMMIT_INTERVAL_MS 1000
+#define LIVE_SAFETY_LAG_NS GST_SECOND
 
 typedef struct RecorderHost RecorderHost;
 typedef struct RecorderSession RecorderSession;
@@ -154,6 +156,9 @@ struct SharedMuxGroup {
     int session_indices[MAX_SESSIONS];
     int session_count;
     ULONGLONG started_tick_ms;
+    ULONGLONG last_commit_tick_ms;
+    guint64 track_written_end_ns[MAX_SESSIONS];
+    guint64 confirmed_position_ns;
     unsigned long long mux_bytes_written;
     int sink_error;
     int pipeline_error;
@@ -486,6 +491,83 @@ static gboolean load_identity_plugin(const char *path) {
 }
 
 
+static int is_gc_audio_essence_klv(const unsigned char *data, size_t size, int *track_index) {
+    static const unsigned char prefix[12] = {
+        0x06, 0x0e, 0x2b, 0x34, 0x01, 0x02, 0x01, 0x01,
+        0x0d, 0x01, 0x03, 0x01
+    };
+    int ordinal;
+    if (!data || size < 17 || memcmp(data, prefix, sizeof(prefix)) != 0) return 0;
+    if (data[12] != 0x16 || (data[14] != 0x08 && data[14] != 0x09 && data[14] != 0x0a))
+        return 0;
+    ordinal = (int)data[15];
+    if (ordinal < 1) return 0;
+    if (track_index) *track_index = ordinal - 1;
+    return 1;
+}
+
+static int maybe_commit_shared_watermark(
+    SharedMuxGroup *group,
+    GstBuffer *buffer,
+    const unsigned char *data,
+    size_t size,
+    char *error_text,
+    size_t error_text_size) {
+
+    GstClockTime pts, duration;
+    guint64 end_ns, min_end = G_MAXUINT64, safe_position;
+    ULONGLONG now;
+    int track_index, i;
+
+    if (!group || !buffer) return 1;
+    if (!is_gc_audio_essence_klv(data, size, &track_index)) return 1;
+    if (track_index < 0 || track_index >= group->session_count) return 1;
+
+    pts = GST_BUFFER_PTS(buffer);
+    duration = GST_BUFFER_DURATION(buffer);
+    if (!GST_CLOCK_TIME_IS_VALID(pts) || !GST_CLOCK_TIME_IS_VALID(duration)) return 1;
+    if (duration > G_MAXUINT64 - pts) return 0;
+    end_ns = pts + duration;
+    if (end_ns > group->track_written_end_ns[track_index])
+        group->track_written_end_ns[track_index] = end_ns;
+
+    now = GetTickCount64();
+    if (group->last_commit_tick_ms &&
+        now - group->last_commit_tick_ms < LIVE_COMMIT_INTERVAL_MS)
+        return 1;
+    group->last_commit_tick_ms = now;
+
+    /*
+     * A shared MXF is only safe through the least-advanced configured track.
+     * GAP edit units count as structural progress, so inactive tracks can
+     * advance without fabricating recorded audio.
+     */
+    for (i = 0; i < group->session_count; i++) {
+        if (group->track_written_end_ns[i] == 0) {
+            min_end = 0;
+            break;
+        }
+        if (group->track_written_end_ns[i] < min_end)
+            min_end = group->track_written_end_ns[i];
+    }
+    if (min_end <= LIVE_SAFETY_LAG_NS) return 1;
+
+    /*
+     * Keep one full second behind the structurally complete write head.
+     * With the one-second commit cadence this yields the requested ~1-2 s
+     * near-live delay while leaving the timeline strictly read-safe.
+     */
+    safe_position = min_end - LIVE_SAFETY_LAG_NS;
+    if (safe_position <= group->confirmed_position_ns) return 1;
+
+    if (!storage_writer_commit(&group->writer, safe_position,
+            LIVE_COMMIT_INTERVAL_MS, error_text, error_text_size))
+        return 0;
+
+    group->confirmed_position_ns = safe_position;
+    return 1;
+}
+
 static GstFlowReturn on_shared_mux_sample(GstElement *sink, gpointer user_data) {
     SharedMuxGroup *group = (SharedMuxGroup *)user_data;
     GstSample *sample = NULL;
@@ -509,6 +591,18 @@ static GstFlowReturn on_shared_mux_sample(GstElement *sink, gpointer user_data) 
         return GST_FLOW_ERROR;
     }
     group->mux_bytes_written += map.size;
+
+    if (!maybe_commit_shared_watermark(group, buffer, map.data, map.size,
+            error_text, sizeof(error_text))) {
+        group->sink_error = 1;
+        g_printerr("Growing MXF watermark failure category=%s: %s\n",
+            group->category, error_text);
+        audit_event(group->host, NULL, "INTEGRITY_FAILURE", error_text);
+        gst_buffer_unmap(buffer, &map);
+        gst_sample_unref(sample);
+        return GST_FLOW_ERROR;
+    }
+
     gst_buffer_unmap(buffer, &map);
     gst_sample_unref(sample);
     return GST_FLOW_OK;
