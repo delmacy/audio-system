@@ -339,26 +339,31 @@ def _is_target_audio_klv(key: bytes, track_index: int) -> bool:
     )
 
 
-def _decode_growing_window(resolved: dict, start: datetime, end: datetime) -> bytes:
-    window_start = parse_utc(resolved["window_start_utc"])
-    if end <= start:
-        return b""
+def _decode_growing_pcm(resolved: dict) -> bytes:
+    """
+    Decode only real A-law essence from the confirmed growing MXF prefix.
 
-    total_samples = max(0, int(round((end - start).total_seconds() * SAMPLE_RATE)))
-    output = bytearray(total_samples * BYTES_PER_SAMPLE)
-    if total_samples == 0:
-        return bytes(output)
-
-    request_start_sample = int(round((start - window_start).total_seconds() * SAMPLE_RATE))
-    request_end_sample = request_start_sample + total_samples
-    confirmed_samples = int(resolved["committed_position_ns"] * SAMPLE_RATE // 1_000_000_000)
+    Sparse zero-length KLVs are structural markers, not recorded silence. The
+    caller places the decoded media against recorder-audit UTC intervals, which
+    is the same presentation model used for finalized MXFs.
+    """
     target_track = int(resolved["track"].get("track_index", 0))
     limit = int(resolved["flushed_bytes"])
-    unit_index = 0
+    required_samples = sum(
+        max(0, int(round(
+            (parse_utc(interval["end_utc"]) - parse_utc(interval["start_utc"])).total_seconds()
+            * SAMPLE_RATE
+        )))
+        for interval in resolved["intervals"]
+    )
+    if required_samples <= 0:
+        return b""
 
+    output = bytearray()
+    decoded_samples = 0
     with Path(resolved["mxf"]).open("rb") as stream:
         offset = 0
-        while offset + 17 <= limit:
+        while offset + 17 <= limit and decoded_samples < required_samples:
             key = stream.read(16)
             if len(key) != 16:
                 break
@@ -371,41 +376,25 @@ def _decode_growing_window(resolved: dict, start: datetime, end: datetime) -> by
             if value_length < 0 or value_length > limit - offset:
                 break
 
-            target = _is_target_audio_klv(key, target_track)
-            if not target:
+            if not _is_target_audio_klv(key, target_track):
                 stream.seek(value_length, 1)
                 offset += value_length
                 continue
-
-            unit_start_sample = unit_index * SAMPLES_PER_EDIT_UNIT
-            unit_index += 1
-            if unit_start_sample >= confirmed_samples:
-                break
 
             payload = stream.read(value_length)
             if len(payload) != value_length:
                 break
             offset += value_length
 
-            unit_end_sample = min(unit_start_sample + SAMPLES_PER_EDIT_UNIT, confirmed_samples)
-            overlap_start = max(unit_start_sample, request_start_sample)
-            overlap_end = min(unit_end_sample, request_end_sample)
-            if overlap_end <= overlap_start or not payload:
-                if unit_start_sample >= request_end_sample:
-                    break
+            # Zero-length essence KLV = structural GAP. It must not become
+            # evidence audio; UTC placement/silence is supplied by the audit.
+            if not payload:
                 continue
 
-            decoded_pcm = b"".join(ALAW_PCM_BYTES[value] for value in payload[:SAMPLES_PER_EDIT_UNIT])
-            available_samples = len(decoded_pcm) // BYTES_PER_SAMPLE
-            source_from = overlap_start - unit_start_sample
-            source_to = min(overlap_end - unit_start_sample, available_samples)
-            if source_to > source_from:
-                target_from = overlap_start - request_start_sample
-                chunk = decoded_pcm[source_from * 2:source_to * 2]
-                output[target_from * 2:target_from * 2 + len(chunk)] = chunk
-
-            if unit_start_sample >= request_end_sample:
-                break
+            remaining = required_samples - decoded_samples
+            payload = payload[:remaining]
+            output.extend(b"".join(ALAW_PCM_BYTES[value] for value in payload))
+            decoded_samples += len(payload)
 
     return bytes(output)
 
@@ -456,21 +445,21 @@ def render_operational_wav(logical_track_uuid: str, from_utc: str | None = None,
     if total_bytes % 2:
         total_bytes += 1
 
+    cache_path = None
     if resolved.get("open"):
-        pcm = _decode_growing_window(resolved, start, end)
-        return plan, _wav_bytes(pcm)
+        decoded = _decode_growing_pcm(resolved)
+    else:
+        cache_key = hashlib.sha256(
+            (str(resolved["mxf"]) + "|" + str(resolved["track"].get("track_index", 0))
+             + "|" + plan["from_utc"] + "|" + plan["to_utc"]
+             + "|" + str(resolved["mxf"].stat().st_mtime_ns)).encode("utf-8")
+        ).hexdigest()
+        CACHE.mkdir(parents=True, exist_ok=True)
+        cache_path = CACHE / f"{cache_key}.wav"
+        if cache_path.is_file():
+            return plan, cache_path.read_bytes()
+        decoded = _decode_pcm(resolved["mxf"], int(resolved["track"].get("track_index", 0)))
 
-    cache_key = hashlib.sha256(
-        (str(resolved["mxf"]) + "|" + str(resolved["track"].get("track_index", 0))
-         + "|" + plan["from_utc"] + "|" + plan["to_utc"]
-         + "|" + str(resolved["mxf"].stat().st_mtime_ns)).encode("utf-8")
-    ).hexdigest()
-    CACHE.mkdir(parents=True, exist_ok=True)
-    cache_path = CACHE / f"{cache_key}.wav"
-    if cache_path.is_file():
-        return plan, cache_path.read_bytes()
-
-    decoded = _decode_pcm(resolved["mxf"], int(resolved["track"].get("track_index", 0)))
     output = bytearray(total_bytes)
     source_cursor = 0
 
@@ -504,5 +493,6 @@ def render_operational_wav(logical_track_uuid: str, from_utc: str | None = None,
             output[target:target + writable] = chunk[:writable]
 
     wav = _wav_bytes(bytes(output))
-    cache_path.write_bytes(wav)
+    if cache_path is not None:
+        cache_path.write_bytes(wav)
     return plan, wav
