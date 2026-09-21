@@ -42,15 +42,19 @@ type RecorderStatusPayload = {
     }
     settings: {
       telephone: {
-        ringing_slots_per_phone: number
+        received_tracks_mode: 'one_per_cwp_per_phone'
         calling_slots_per_phone: number
       }
       rotation_minutes: number
+      topology_change_guard_seconds: number
+      topology_revision: number
     }
   }
   telephone_capacity: {
     registered_phones: number
-    ringing_slots_per_phone: number
+    registered_cwps: number
+    received_tracks_per_phone: number
+    received_tracks_mode: 'one_per_cwp_per_phone'
     calling_slots_per_phone: number
     tracks_per_phone: number
     total_track_capacity: number
@@ -89,7 +93,7 @@ function statusLabel(status: RecorderStatusPayload['runtime_status']) {
 const FILE_META = {
   cwp: { title: 'CWP', detail: 'Uma trilha por CWP', icon: Server },
   radio: { title: 'Rádios', detail: 'Uma trilha por frequência ativa', icon: Radio },
-  telephone: { title: 'Telefones', detail: 'Slots independentes de ringing e calling', icon: Phone },
+  telephone: { title: 'Telefones', detail: 'Received por CWP + calling configurável', icon: Phone },
 } as const
 
 export function RecorderStatusView() {
@@ -97,9 +101,9 @@ export function RecorderStatusView() {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
-  const [ringingSlots, setRingingSlots] = useState(5)
   const [callingSlots, setCallingSlots] = useState(4)
   const [rotationMinutes, setRotationMinutes] = useState(60)
+  const [topologyGuardSeconds, setTopologyGuardSeconds] = useState(5)
 
   const load = useCallback(async () => {
     try {
@@ -107,9 +111,9 @@ export function RecorderStatusView() {
         await fetch('/api/recorder/status', { headers: { Accept: 'application/json' } }),
       )
       setData(next)
-      setRingingSlots(next.recording_layout.settings.telephone.ringing_slots_per_phone)
       setCallingSlots(next.recording_layout.settings.telephone.calling_slots_per_phone)
       setRotationMinutes(next.recording_layout.settings.rotation_minutes)
+      setTopologyGuardSeconds(next.recording_layout.settings.topology_change_guard_seconds)
       setError('')
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Falha ao consultar o gravador.')
@@ -133,10 +137,10 @@ export function RecorderStatusView() {
         headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
         body: JSON.stringify({
           telephone: {
-            ringing_slots_per_phone: ringingSlots,
             calling_slots_per_phone: callingSlots,
           },
           rotation_minutes: rotationMinutes,
+          topology_change_guard_seconds: topologyGuardSeconds,
         }),
       }))
       await load()
@@ -263,31 +267,36 @@ export function RecorderStatusView() {
       </header>
       <div className="recorder-phone-config">
         <label>
-          Ringing por telefone
-          <input type="number" min={1} max={128} value={ringingSlots} onChange={event => setRingingSlots(Number(event.target.value))} />
-          <small>Slots simultâneos aguardando atendimento.</small>
+          Received por telefone
+          <input type="number" value={telephoneCapacity?.received_tracks_per_phone ?? 0} readOnly />
+          <small>Automático: uma trilha para cada CWP cadastrado.</small>
         </label>
         <label>
           Calling por telefone
           <input type="number" min={1} max={128} value={callingSlots} onChange={event => setCallingSlots(Number(event.target.value))} />
-          <small>Slots simultâneos de chamada estabelecida.</small>
+          <small>Capacidade simultânea de chamadas de saída; não é multiplicada por CWP.</small>
         </label>
         <label>
           Rotação MXF
           <div className="recorder-input-unit"><input type="number" min={1} max={1440} value={rotationMinutes} onChange={event => setRotationMinutes(Number(event.target.value))} /><span>min</span></div>
-          <small>Cria uma nova janela física mantendo a categoria.</small>
+          <small>Janela física alinhada ao relógio.</small>
+        </label>
+        <label>
+          Proteção da virada
+          <div className="recorder-input-unit"><input type="number" min={0} max={300} value={topologyGuardSeconds} onChange={event => setTopologyGuardSeconds(Number(event.target.value))} /><span>s</span></div>
+          <small>Mudanças dentro desta margem aguardam a próxima virada.</small>
         </label>
         <div className="recorder-phone-capacity-summary">
           <span>Capacidade por telefone</span>
-          <strong>{ringingSlots + callingSlots} trilhas</strong>
-          <small>{ringingSlots} ringing + {callingSlots} calling</small>
+          <strong>{(telephoneCapacity?.received_tracks_per_phone ?? 0) + callingSlots} trilhas</strong>
+          <small>{telephoneCapacity?.received_tracks_per_phone ?? 0} received + {callingSlots} calling</small>
         </div>
         <button type="button" className="recorder-save-config" onClick={() => void saveSettings()} disabled={saving}>
           <Save size={15} />Salvar configuração
         </button>
       </div>
       <div className="recorder-capacity-note">
-        Cada slot é alocado em runtime para uma sessão/CWP correspondente. Uma frequência de rádio só gera mídia quando estiver ativa em algum CWP; ausência de atividade não produz gravação útil naquela trilha.
+        Received é derivado automaticamente dos CWP cadastrados: cada telefone recebe uma trilha por CWP. Calling usa um pool reutilizável configurável e não é multiplicado por CWP. Inclusão, exclusão ou renomeação de CWP/serviço gera uma nova revisão de topologia e pode antecipar a virada do MXF.
       </div>
     </section>
 
