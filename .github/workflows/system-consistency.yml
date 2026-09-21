@@ -163,7 +163,7 @@ jobs:
         shell: pwsh
         run: ./scripts/mxf/Build-MxfIdentityPlugin.ps1
 
-      - name: Verify generated mux contains growing-MXF watermark patch
+      - name: Verify generated MXF sources contain live and sparse-track patches
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -175,6 +175,17 @@ jobs:
           )) {
             if (-not $mux.Contains($term)) {
               throw "Generated mxfmux.c lost required patch marker: $term"
+            }
+          }
+
+          $alaw = Get-Content -Raw -LiteralPath './src/mxf-identity-plugin/buildsrc/mxfalaw.c'
+          foreach ($term in @(
+            'structural container padding',
+            'gst_buffer_memset (filler, 0, 0xD5',
+            'MEDIA_START/MEDIA_END remains authoritative'
+          )) {
+            if (-not $alaw.Contains($term)) {
+              throw "Generated mxfalaw.c lost required sparse-track patch marker: $term"
             }
           }
 
