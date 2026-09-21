@@ -8,6 +8,9 @@ import socket
 from datetime import datetime, timezone
 from pathlib import Path
 
+from config_store import list_services
+from recording_layout import recording_layout_snapshot
+
 ROOT = Path(__file__).resolve().parents[2]
 PROFILE = ROOT / "config" / "profiles" / "local-poc.ini"
 RUNS_ROOT = ROOT / "runs" / "operational-recorder"
@@ -93,6 +96,27 @@ def _mxf_from_state(state: dict | None) -> Path | None:
         return None
 
 
+def _category_file_status(layout: dict) -> dict:
+    result = {}
+    for kind, item in layout["paths"].items():
+        path = Path(str(item["file"]))
+        directory = Path(str(item["directory"]))
+        latest = None
+        if directory.is_dir():
+            candidates = sorted(directory.glob("*.mxf"), key=lambda p: p.stat().st_mtime, reverse=True)
+            latest = candidates[0] if candidates else None
+        selected_exists = path.is_file()
+        result[kind] = {
+            **item,
+            "exists": selected_exists,
+            "size_bytes": path.stat().st_size if selected_exists else None,
+            "latest_file": latest.name if latest else None,
+            "latest_file_path": str(latest) if latest else None,
+            "latest_size_bytes": latest.stat().st_size if latest else None,
+        }
+    return result
+
+
 def build_recorder_status() -> dict:
     ip, port = _profile()
     reachable = _rtsp_reachable(ip, port)
@@ -112,6 +136,14 @@ def build_recorder_status() -> dict:
     runtime_status = "recording" if reachable and recording else "online" if reachable else "offline"
     if not ip or not port:
         runtime_status = "unconfigured"
+
+    layout = recording_layout_snapshot()
+    category_files = _category_file_status(layout)
+    services = list_services()
+    telephone_count = sum(1 for service in services if service.get("kind") == "TEL")
+    ringing_slots = int(layout["settings"]["telephone"]["ringing_slots_per_phone"])
+    calling_slots = int(layout["settings"]["telephone"]["calling_slots_per_phone"])
+    telephone_track_capacity = telephone_count * (ringing_slots + calling_slots)
 
     file_exists = bool(mxf and mxf.is_file())
     file_size = mxf.stat().st_size if file_exists and mxf else None
@@ -147,6 +179,17 @@ def build_recorder_status() -> dict:
             "track_count": track_count,
             "file_id": state.get("file_id") if state else None,
             "generated_utc": state.get("generated_utc") if state else None,
+        },
+        "recording_layout": {
+            **layout,
+            "files": category_files,
+        },
+        "telephone_capacity": {
+            "registered_phones": telephone_count,
+            "ringing_slots_per_phone": ringing_slots,
+            "calling_slots_per_phone": calling_slots,
+            "tracks_per_phone": ringing_slots + calling_slots,
+            "total_track_capacity": telephone_track_capacity,
         },
         "metrics": {
             "disk": None,
