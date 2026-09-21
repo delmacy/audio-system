@@ -99,6 +99,22 @@ def _service_command(name: str) -> tuple[list[str], Path]:
     raise ValueError(f"Unknown service: {name}")
 
 
+
+def _current_recorder_pid() -> int | None:
+    pointer = ROOT / "runs" / "operational-recorder" / "current-run.txt"
+    if not pointer.is_file():
+        return None
+    try:
+        run = Path(pointer.read_text(encoding="utf-8-sig").strip())
+        state_file = run / "operational-recorder-state.json"
+        if not state_file.is_file():
+            return None
+        payload = json.loads(state_file.read_text(encoding="utf-8-sig"))
+        pid = int(payload.get("pid") or 0)
+        return pid if _pid_alive(pid) else None
+    except (OSError, json.JSONDecodeError, ValueError):
+        return None
+
 def _external_running(name: str) -> bool:
     endpoint = PORTS.get(name)
     return bool(endpoint and _port_open(*endpoint))
@@ -114,6 +130,16 @@ def start_service(name: str) -> dict:
     current_pid = int(current.get("pid") or 0)
 
     if _pid_alive(current_pid):
+        return service_status(name)
+
+    if name == "recorder" and _current_recorder_pid():
+        services[name] = {
+            "pid": _current_recorder_pid(),
+            "managed": False,
+            "started_utc": None,
+            "state": "running_external",
+        }
+        _save_registry(registry)
         return service_status(name)
 
     if name in PORTS and _external_running(name):
@@ -183,12 +209,17 @@ def stop_service(name: str) -> dict:
     pid = int(current.get("pid") or 0)
     managed = bool(current.get("managed"))
 
-    if managed and _pid_alive(pid):
-        _kill_tree(pid)
-        for _ in range(20):
-            if not _pid_alive(pid):
-                break
-            time.sleep(0.1)
+    target_pid = pid
+    if name == "recorder" and not _pid_alive(target_pid):
+        target_pid = int(_current_recorder_pid() or 0)
+
+    if target_pid and _pid_alive(target_pid):
+        if managed or name == "recorder":
+            _kill_tree(target_pid)
+            for _ in range(20):
+                if not _pid_alive(target_pid):
+                    break
+                time.sleep(0.1)
 
     services[name] = {
         **current,
