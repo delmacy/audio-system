@@ -171,30 +171,38 @@ class RtspClient:
 
 
 @dataclass
-class ActiveSession:
-    call_id: str
-    peer: tuple[str, int]
+class RecordingLeg:
     service_id: str
     service_kind: str
     route_key: str
     track_index: int
     recorder_rtp_port: int
-    local_rtp_port: int
     direction: str
-    cwp_id: str | None
     slot_index: int | None
+    recorded_user: str
+    remote_party_user: str
+    rtsp: RtspClient
+    packets: int = 0
+    bytes_forwarded: int = 0
+
+
+@dataclass
+class ActiveSession:
+    call_id: str
+    peer: tuple[str, int]
+    local_rtp_port: int
     sip_from_raw: str
     sip_to_raw: str
     sip_from_user: str
     sip_to_user: str
-    remote_party_user: str
-    rtsp: RtspClient
+    cwp_id: str | None
+    legs: list[RecordingLeg]
     rtp_socket: socket.socket
     relay_stop: threading.Event
     relay_thread: threading.Thread
     started_utc: str = field(default_factory=utc_now)
     packets: int = 0
-    bytes_forwarded: int = 0
+    bytes_received: int = 0
 
 
 class RpsProxy:
@@ -282,32 +290,63 @@ class RpsProxy:
         ]
         with self.lock:
             used = {
-                session.slot_index
+                leg.slot_index
                 for session in self.sessions.values()
-                if session.service_id == number and session.direction == direction
+                for leg in session.legs
+                if leg.service_id == number and leg.direction == direction
             }
         for track in sorted(candidates, key=lambda item: int(item.get("slot_index") or 0)):
             if int(track.get("slot_index") or 0) not in used:
                 return track
         return None
 
-    def telephone_service_and_direction(self, message: SipMessage) -> tuple[dict, str, str, str]:
+    def telephone_recording_legs(self, message: SipMessage, tracks: list[dict]) -> tuple[list[dict], dict]:
         request_user = sip_user(message.request_uri)
         to_user = sip_user(message.header("to")) or request_user
         from_user = sip_user(message.header("from"))
 
-        to_service = self.service_by_user(to_user) if to_user else None
         from_service = self.service_by_user(from_user) if from_user else None
-        if to_service and to_service.get("kind") == "TEL":
-            return to_service, "received", from_user, to_user
+        to_service = self.service_by_user(to_user) if to_user else None
+
+        specs: list[dict] = []
+
         if from_service and from_service.get("kind") == "TEL":
-            return from_service, "calling", from_user, to_user
+            number = service_number(str(from_service["label"]))
+            track = self.telephone_slot(number, "calling", tracks)
+            if not track:
+                raise RuntimeError(f"No free calling slot is available for telephone {number}")
+            specs.append({
+                "service": from_service,
+                "track": track,
+                "direction": "calling",
+                "recorded_user": from_user,
+                "remote_party_user": to_user,
+            })
 
-        raise LookupError(
-            f"No enabled telephone service matches SIP From='{from_user}' or To='{to_user}'"
-        )
+        if to_service and to_service.get("kind") == "TEL":
+            number = service_number(str(to_service["label"]))
+            track = self.telephone_slot(number, "received", tracks)
+            if not track:
+                raise RuntimeError(f"No free received slot is available for telephone {number}")
+            specs.append({
+                "service": to_service,
+                "track": track,
+                "direction": "received",
+                "recorded_user": to_user,
+                "remote_party_user": from_user,
+            })
 
-    def resolve_track(self, message: SipMessage, peer_ip: str) -> tuple[dict, dict | None, str, dict]:
+        if not specs:
+            raise LookupError(
+                f"No enabled telephone service matches SIP From='{from_user}' or To='{to_user}'"
+            )
+
+        return specs, {
+            "from_user": from_user,
+            "to_user": to_user,
+        }
+
+    def resolve_recording_legs(self, message: SipMessage, peer_ip: str) -> tuple[list[dict], dict | None, dict]:
         topology, _ = self.current_topology()
         tracks = list(topology.get("tracks") or [])
         category = message.header("x-audio-category").strip().lower()
@@ -321,10 +360,14 @@ class RpsProxy:
             track = next((item for item in tracks if item.get("route_key") == route), None)
             if not track:
                 raise LookupError(f"CWP track is not present in current recorder topology: {route}")
-            return track, cwp, "cwp", {
+            return [{
+                "track": track,
+                "direction": "cwp",
+                "recorded_user": str(cwp["label"]),
+                "remote_party_user": "",
+            }], cwp, {
                 "from_user": sip_user(message.header("from")),
                 "to_user": sip_user(message.header("to")) or request_user,
-                "remote_party_user": "",
             }
 
         service = self.service_by_user(request_user)
@@ -334,32 +377,20 @@ class RpsProxy:
             track = next((item for item in tracks if item.get("route_key") == route), None)
             if not track:
                 raise LookupError(f"Radio track is not present in current recorder topology: {route}")
-            return track, None, "radio", {
+            return [{
+                "service": service,
+                "track": track,
+                "direction": "radio",
+                "recorded_user": request_user,
+                "remote_party_user": "",
+            }], None, {
                 "from_user": sip_user(message.header("from")),
                 "to_user": sip_user(message.header("to")) or request_user,
-                "remote_party_user": "",
             }
 
-        service, inferred_direction, from_user, to_user = self.telephone_service_and_direction(message)
-        explicit_direction = message.header("x-audio-direction").strip().lower()
-        direction = explicit_direction or inferred_direction
-        if direction not in {"received", "calling"}:
-            raise ValueError("Telephone direction must be received or calling")
+        specs, sip_meta = self.telephone_recording_legs(message, tracks)
+        return specs, self.resolve_cwp(message, peer_ip), sip_meta
 
-        number = service_number(str(service["label"]))
-        track = self.telephone_slot(number, direction, tracks)
-        if not track:
-            raise RuntimeError(f"No free {direction} slot is available for telephone {number}")
-
-        recorded_user = sip_user(str(service.get("sip_uri") or "")) or number
-        remote_party = from_user if direction == "received" else to_user
-        metadata = {
-            "from_user": from_user,
-            "to_user": to_user,
-            "recorded_user": recorded_user,
-            "remote_party_user": remote_party,
-        }
-        return track, self.resolve_cwp(message, peer_ip), direction, metadata
 
     def sip_response(
         self,
@@ -395,7 +426,6 @@ class RpsProxy:
         self,
         call_id: str,
         udp: socket.socket,
-        target: tuple[str, int],
         stop: threading.Event,
     ) -> None:
         udp.settimeout(0.5)
@@ -408,35 +438,44 @@ class RpsProxy:
                 break
             if not packet:
                 continue
-            try:
-                udp.sendto(packet, target)
-                with self.lock:
-                    session = self.sessions.get(call_id)
-                    if session:
-                        session.packets += 1
-                        session.bytes_forwarded += len(packet)
-            except OSError as exc:
-                self.last_error = str(exc)
-                audit("RPS_RTP_FORWARD_ERROR", call_id=call_id, error=str(exc))
-                break
 
-    def open_recording(self, request: SipMessage, peer: tuple[str, int]) -> ActiveSession:
-        call_id = request.header("call-id").strip()
-        if not call_id:
-            raise ValueError("SIP INVITE requires Call-ID")
-        with self.lock:
-            if call_id in self.sessions:
-                return self.sessions[call_id]
+            with self.lock:
+                session = self.sessions.get(call_id)
+                legs = list(session.legs) if session else []
 
-        track, cwp, direction, sip_meta = self.resolve_track(request, peer[0])
+            if not session:
+                continue
+
+            session.packets += 1
+            session.bytes_received += len(packet)
+
+            for leg in legs:
+                try:
+                    udp.sendto(packet, (self.recorder_ip, leg.recorder_rtp_port))
+                    leg.packets += 1
+                    leg.bytes_forwarded += len(packet)
+                except OSError as exc:
+                    self.last_error = str(exc)
+                    audit(
+                        "RPS_RTP_FORWARD_ERROR",
+                        call_id=call_id,
+                        route_key=leg.route_key,
+                        direction=leg.direction,
+                        error=str(exc),
+                    )
+
+    def _open_rtsp_leg(
+        self,
+        call_id: str,
+        track: dict,
+        direction: str,
+        recorded_user: str,
+        remote_party_user: str,
+        local_rtp_port: int,
+    ) -> RecordingLeg:
         route = str(track["route_key"])
         recorder_rtp_port = int(track["rtp_port"])
         number = str(track["service_id"])
-
-        udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        udp_bind_ip = self.bind_ip
-        udp.bind((udp_bind_ip, 0))
-        local_rtp_port = int(udp.getsockname()[1])
 
         rtsp = RtspClient(self.recorder_ip, self.recorder_rtsp_port, self.bind_ip)
         rtsp.connect()
@@ -453,6 +492,9 @@ class RpsProxy:
             f"a=label:{track.get('display_name') or route}",
             "a=mid:audio0",
             f"a=x-sip-call-id:{call_id}",
+            f"a=x-call-direction:{direction}",
+            f"a=x-recorded-user:{recorded_user}",
+            f"a=x-remote-party:{remote_party_user}",
         ]) + "\r\n"
         rtsp.request("ANNOUNCE", uri, sdp, {"Content-Type": "application/sdp"})
         rtsp.request(
@@ -462,32 +504,74 @@ class RpsProxy:
         )
         rtsp.request("RECORD", uri)
 
-        stop = threading.Event()
-        thread = threading.Thread(
-            target=self._relay_loop,
-            args=(call_id, udp, (self.recorder_ip, recorder_rtp_port), stop),
-            name=f"rps-rtp-{call_id[:12]}",
-            daemon=True,
-        )
-        service_kind = "CWP" if direction == "cwp" else ("RADIO" if track.get("category") == "radio" else "TEL")
-        session = ActiveSession(
-            call_id=call_id,
-            peer=peer,
+        return RecordingLeg(
             service_id=number,
-            service_kind=service_kind,
+            service_kind="RADIO" if track.get("category") == "radio" else ("CWP" if direction == "cwp" else "TEL"),
             route_key=route,
             track_index=int(track["track_index"]),
             recorder_rtp_port=recorder_rtp_port,
-            local_rtp_port=local_rtp_port,
             direction=direction,
-            cwp_id=str(cwp["id"]) if cwp else None,
             slot_index=int(track["slot_index"]) if track.get("slot_index") is not None else None,
+            recorded_user=recorded_user,
+            remote_party_user=remote_party_user,
+            rtsp=rtsp,
+        )
+
+    def open_recording(self, request: SipMessage, peer: tuple[str, int]) -> ActiveSession:
+        call_id = request.header("call-id").strip()
+        if not call_id:
+            raise ValueError("SIP INVITE requires Call-ID")
+        with self.lock:
+            if call_id in self.sessions:
+                return self.sessions[call_id]
+
+        specs, cwp, sip_meta = self.resolve_recording_legs(request, peer[0])
+
+        udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        udp.bind((self.bind_ip, 0))
+        local_rtp_port = int(udp.getsockname()[1])
+
+        legs: list[RecordingLeg] = []
+        try:
+            for spec in specs:
+                legs.append(self._open_rtsp_leg(
+                    call_id=call_id,
+                    track=spec["track"],
+                    direction=str(spec["direction"]),
+                    recorded_user=str(spec.get("recorded_user") or ""),
+                    remote_party_user=str(spec.get("remote_party_user") or ""),
+                    local_rtp_port=local_rtp_port,
+                ))
+        except Exception:
+            for leg in legs:
+                try:
+                    leg.rtsp.request(
+                        "TEARDOWN",
+                        f"rtsp://{self.recorder_ip}:{self.recorder_rtsp_port}{leg.route_key}",
+                    )
+                except Exception:
+                    pass
+                leg.rtsp.close()
+            udp.close()
+            raise
+
+        stop = threading.Event()
+        thread = threading.Thread(
+            target=self._relay_loop,
+            args=(call_id, udp, stop),
+            name=f"rps-rtp-{call_id[:12]}",
+            daemon=True,
+        )
+        session = ActiveSession(
+            call_id=call_id,
+            peer=peer,
+            local_rtp_port=local_rtp_port,
             sip_from_raw=request.header("from"),
             sip_to_raw=request.header("to"),
             sip_from_user=str(sip_meta.get("from_user") or ""),
             sip_to_user=str(sip_meta.get("to_user") or ""),
-            remote_party_user=str(sip_meta.get("remote_party_user") or ""),
-            rtsp=rtsp,
+            cwp_id=str(cwp["id"]) if cwp else None,
+            legs=legs,
             rtp_socket=udp,
             relay_stop=stop,
             relay_thread=thread,
@@ -495,21 +579,30 @@ class RpsProxy:
         with self.lock:
             self.sessions[call_id] = session
         thread.start()
+
         audit(
             "RPS_RECORDING_OPEN",
             call_id=call_id,
-            route_key=route,
-            track_index=session.track_index,
-            recorder_rtp_port=recorder_rtp_port,
             local_rtp_port=local_rtp_port,
-            direction=direction,
-            cwp_id=session.cwp_id,
-            slot_index=session.slot_index,
+            leg_count=len(legs),
             sip_from_raw=session.sip_from_raw,
             sip_to_raw=session.sip_to_raw,
             sip_from_user=session.sip_from_user,
             sip_to_user=session.sip_to_user,
-            remote_party_user=session.remote_party_user,
+            cwp_id=session.cwp_id,
+            legs=[
+                {
+                    "service_id": leg.service_id,
+                    "direction": leg.direction,
+                    "route_key": leg.route_key,
+                    "track_index": leg.track_index,
+                    "slot_index": leg.slot_index,
+                    "recorded_user": leg.recorded_user,
+                    "remote_party_user": leg.remote_party_user,
+                    "recorder_rtp_port": leg.recorder_rtp_port,
+                }
+                for leg in legs
+            ],
         )
         return session
 
@@ -518,28 +611,56 @@ class RpsProxy:
             session = self.sessions.pop(call_id, None)
         if not session:
             return
+
         session.relay_stop.set()
-        try:
-            session.rtsp.request("PAUSE", f"rtsp://{self.recorder_ip}:{self.recorder_rtsp_port}{session.route_key}")
-        except Exception as exc:
-            audit("RPS_RTSP_PAUSE_FAILED", call_id=call_id, error=str(exc))
-        try:
-            session.rtsp.request("TEARDOWN", f"rtsp://{self.recorder_ip}:{self.recorder_rtsp_port}{session.route_key}")
-        except Exception as exc:
-            audit("RPS_RTSP_TEARDOWN_FAILED", call_id=call_id, error=str(exc))
+
+        for leg in session.legs:
+            uri = f"rtsp://{self.recorder_ip}:{self.recorder_rtsp_port}{leg.route_key}"
+            try:
+                leg.rtsp.request("PAUSE", uri)
+            except Exception as exc:
+                audit(
+                    "RPS_RTSP_PAUSE_FAILED",
+                    call_id=call_id,
+                    route_key=leg.route_key,
+                    error=str(exc),
+                )
+            try:
+                leg.rtsp.request("TEARDOWN", uri)
+            except Exception as exc:
+                audit(
+                    "RPS_RTSP_TEARDOWN_FAILED",
+                    call_id=call_id,
+                    route_key=leg.route_key,
+                    error=str(exc),
+                )
+            leg.rtsp.close()
+
         try:
             session.rtp_socket.close()
         except OSError:
             pass
-        session.rtsp.close()
         session.relay_thread.join(timeout=1.0)
+
         audit(
             "RPS_RECORDING_CLOSED",
             call_id=call_id,
             reason=reason,
             packets=session.packets,
-            bytes=session.bytes_forwarded,
-            route_key=session.route_key,
+            bytes_received=session.bytes_received,
+            leg_count=len(session.legs),
+            legs=[
+                {
+                    "service_id": leg.service_id,
+                    "direction": leg.direction,
+                    "route_key": leg.route_key,
+                    "track_index": leg.track_index,
+                    "slot_index": leg.slot_index,
+                    "packets": leg.packets,
+                    "bytes_forwarded": leg.bytes_forwarded,
+                }
+                for leg in session.legs
+            ],
         )
 
     def status(self) -> dict:
@@ -573,21 +694,29 @@ class RpsProxy:
             "sessions": [
                 {
                     "call_id": item.call_id,
-                    "service_id": item.service_id,
-                    "service_kind": item.service_kind,
-                    "direction": item.direction,
-                    "route_key": item.route_key,
-                    "track_index": item.track_index,
-                    "slot_index": item.slot_index,
                     "cwp_id": item.cwp_id,
                     "sip_from_user": item.sip_from_user,
                     "sip_to_user": item.sip_to_user,
-                    "remote_party_user": item.remote_party_user,
                     "local_rtp_port": item.local_rtp_port,
-                    "recorder_rtp_port": item.recorder_rtp_port,
                     "packets": item.packets,
-                    "bytes_forwarded": item.bytes_forwarded,
+                    "bytes_received": item.bytes_received,
                     "started_utc": item.started_utc,
+                    "legs": [
+                        {
+                            "service_id": leg.service_id,
+                            "service_kind": leg.service_kind,
+                            "direction": leg.direction,
+                            "route_key": leg.route_key,
+                            "track_index": leg.track_index,
+                            "slot_index": leg.slot_index,
+                            "recorded_user": leg.recorded_user,
+                            "remote_party_user": leg.remote_party_user,
+                            "recorder_rtp_port": leg.recorder_rtp_port,
+                            "packets": leg.packets,
+                            "bytes_forwarded": leg.bytes_forwarded,
+                        }
+                        for leg in item.legs
+                    ],
                 }
                 for item in sessions
             ],
