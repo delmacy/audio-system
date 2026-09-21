@@ -478,9 +478,16 @@ export function ServiceRegistryView() {
     <section className="registry-section">
       <header>
         <div><span className="registry-section-icon"><Radio size={17} /></span><div><strong>Serviços SIP</strong><small>Informe somente o serviço e o RPS; a URI é gerada automaticamente</small></div></div>
-        <button type="button" className="registry-add-button" onClick={() => setServiceFormOpen(value => !value)}><Plus size={16} />Incluir serviço</button>
+        <button type="button" className="registry-add-button" onClick={() => setServiceFormOpen(value => !value)} disabled={rpsList.length === 0}><Plus size={16} />Incluir serviço</button>
       </header>
-      {serviceFormOpen && <div className="registry-inline-form service sip-service">
+      {rpsList.length === 0 && <div className="registry-locked-state">
+        <ArrowRightLeft size={18} />
+        <div>
+          <strong>Cadastre um RPS primeiro</strong>
+          <span>Os serviços SIP só podem existir depois que houver um RTSP Proxy configurado.</span>
+        </div>
+      </div>}
+      {serviceFormOpen && rpsList.length > 0 && <div className="registry-inline-form service sip-service">
         <label>Tipo<select value={serviceKind} onChange={event => setServiceKind(event.target.value as 'RADIO' | 'TEL')}><option value="RADIO">Rádio</option><option value="TEL">Telefone</option></select></label>
         <label>Nome / frequência / ramal<input value={serviceLabel} onChange={event => setServiceLabel(event.target.value)} placeholder={serviceKind === 'RADIO' ? 'TWR 121.500' : 'TEL-050'} /></label>
         <label>RPS<select value={serviceRpsId} onChange={event => setServiceRpsId(event.target.value)}><option value="">Selecione</option>{rpsList.map(rps => <option value={rps.id} key={rps.id}>{rps.label}</option>)}</select></label>
@@ -488,7 +495,7 @@ export function ServiceRegistryView() {
         <div><button type="button" onClick={() => setServiceFormOpen(false)}>Cancelar</button><button type="button" className="primary" onClick={() => void addService()} disabled={saving || !serviceLabel.trim() || !serviceRpsId || !deriveSipUser(serviceLabel)}>Adicionar</button></div>
       </div>}
       <div className="registry-list">
-        {services.map(service => <article className={'registry-row' + (service.legacy_rtsp ? ' legacy' : '')} key={service.id}>
+        {rpsList.length > 0 && services.map(service => <article className={'registry-row' + (service.legacy_rtsp ? ' legacy' : '')} key={service.id}>
           <span className={'registry-row-icon ' + service.kind.toLowerCase()}>{service.kind === 'RADIO' ? <Radio size={17} /> : <Phone size={17} />}</span>
           <div className="registry-row-main"><strong>{service.label}</strong><small>{service.sip_uri ?? service.endpoint}</small></div>
           <span className={'registry-kind ' + service.kind.toLowerCase()}>{service.kind === 'RADIO' ? 'RÁDIO SIP' : 'TEL SIP'}</span>
