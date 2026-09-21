@@ -15,7 +15,9 @@ param(
     [int]$KeepaliveIntervalMs = 150,
     [int]$PausedProbePackets = 1,
     [int]$StartDelayMs = 0,
-    [string]$PcmaFile = ''
+    [string]$PcmaFile = '',
+    [double]$ToneHz = 0,
+    [double]$ToneLevelDbfs = -12
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -49,6 +51,20 @@ function New-RtpPacket { param([int]$Seq,[uint32]$Timestamp,[byte[]]$Payload)
 }
 
 if ($StartDelayMs -gt 0) { Start-Sleep -Milliseconds $StartDelayMs }
+
+$generatedPcma = $null
+if ($ToneHz -gt 0) {
+    if ($PcmaFile) { throw 'Use either -PcmaFile or -ToneHz, not both.' }
+    $generator = Join-Path $PSScriptRoot '..\generator\audio_generator.py'
+    if (-not (Test-Path -LiteralPath $generator)) { throw "Audio generator not found: $generator" }
+    $generatedPcma = Join-Path ([IO.Path]::GetTempPath()) ('audio-system-tone-' + [Guid]::NewGuid().ToString('N') + '.pcma')
+    $durationSeconds = [Math]::Max(1.0, ([double]$BurstMs / 1000.0))
+    & python $generator '--frequency' $ToneHz.ToString([Globalization.CultureInfo]::InvariantCulture) '--duration' $durationSeconds.ToString([Globalization.CultureInfo]::InvariantCulture) '--level-dbfs' $ToneLevelDbfs.ToString([Globalization.CultureInfo]::InvariantCulture) '--pcma' $generatedPcma
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $generatedPcma)) {
+        throw 'Failed to generate temporary PCMA tone for simulator.'
+    }
+    $PcmaFile = $generatedPcma
+}
 
 $client = New-Object Net.Sockets.TcpClient
 $client.Connect($RecorderIp,$RtspPort)
@@ -111,4 +127,7 @@ try {
 } finally {
     if($udp){$udp.Close()}
     if($client){$client.Close()}
+    if($generatedPcma -and (Test-Path -LiteralPath $generatedPcma)){
+        Remove-Item -LiteralPath $generatedPcma -Force -ErrorAction SilentlyContinue
+    }
 }
