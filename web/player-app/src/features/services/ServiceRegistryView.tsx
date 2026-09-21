@@ -324,8 +324,6 @@ export function ServiceRegistryView() {
     }
   }
 
-  const gatewayOptions = (selected: string) => <select value={selected} onChange={() => undefined} aria-hidden="true" />
-
   return <main className="registry-page">
     <header className="registry-page-header">
       <div>
@@ -490,6 +488,5 @@ export function ServiceRegistryView() {
       </section>
     </div>}
 
-    <div style={{ display: 'none' }}>{gatewayOptions('')}</div>
   </main>
 }
