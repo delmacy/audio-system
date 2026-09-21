@@ -8,7 +8,7 @@ from urllib.parse import parse_qs, urlparse
 
 from playback_data import build_operational_plan, render_operational_wav
 from timeline_data import build_timeline
-from config_store import configuration_snapshot, create_cwp, create_gateway, create_service, delete_cwp, delete_gateway, delete_service, list_cwps, list_gateways, list_services, next_cwp_ip, update_cwp, update_gateway, update_service
+from config_store import configuration_snapshot, create_cwp, create_gateway, create_service, delete_cwp, delete_gateway, delete_service, get_network_config, list_cwps, list_gateways, list_services, next_cwp_ip, renew_cwp_ips, update_cwp, update_gateway, update_network_config, update_service
 
 HOST = "127.0.0.1"
 PORT = 8500
@@ -65,6 +65,8 @@ class Handler(BaseHTTPRequestHandler):
                     "/api/services",
                     "/api/gateways",
                     "/api/network/next-ip",
+                    "/api/network/config",
+                    "/api/network/renew-ips",
                     "/api/playback/plan?lt=<uuid>&from=<utc>&to=<utc>",
                     "/api/playback/audio?lt=<uuid>&from=<utc>&to=<utc>",
                 ],
@@ -108,6 +110,13 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(200, {"ip": next_cwp_ip(), "allocation": "first_free_ascending"})
             except Exception as exc:
                 self._json(500, {"error": "ip_allocation_failed", "detail": str(exc)})
+            return
+
+        if parsed.path == "/api/network/config":
+            try:
+                self._json(200, {"network": get_network_config()})
+            except Exception as exc:
+                self._json(500, {"error": "network_config_failed", "detail": str(exc)})
             return
 
         if parsed.path == "/api/timeline":
@@ -171,6 +180,10 @@ class Handler(BaseHTTPRequestHandler):
                 )
                 self._json(201, {"gateway": item})
                 return
+            if parsed.path == "/api/network/renew-ips":
+                result = renew_cwp_ips()
+                self._json(200, {"renewal": result})
+                return
             self._json(404, {"error": "not_found"})
         except ValueError as exc:
             self._json(400, {"error": "invalid_request", "detail": str(exc)})
@@ -220,6 +233,14 @@ class Handler(BaseHTTPRequestHandler):
                     rtsp_base_url=str(payload.get("rtsp_base_url", "")),
                 )
                 self._json(200, {"gateway": item})
+                return
+            if parsed.path == "/api/network/config":
+                item = update_network_config(
+                    network=str(payload.get("network", "")),
+                    start=str(payload.get("start", "")),
+                    end=str(payload.get("end", "")),
+                )
+                self._json(200, {"network": item})
                 return
             self._json(404, {"error": "not_found"})
         except ValueError as exc:
