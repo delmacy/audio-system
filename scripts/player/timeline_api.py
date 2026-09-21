@@ -9,6 +9,7 @@ from urllib.parse import parse_qs, urlparse
 from playback_data import build_operational_plan, render_operational_wav
 from timeline_data import build_timeline
 from recorder_status import build_recorder_status
+from recording_layout import get_recorder_settings, recording_layout_snapshot, update_recorder_settings
 from config_store import configuration_snapshot, create_cwp, create_gateway, create_service, delete_cwp, delete_gateway, delete_service, get_network_config, list_cwps, list_gateways, list_services, next_cwp_ip, renew_cwp_ips, update_cwp, update_gateway, update_network_config, update_service
 
 HOST = "127.0.0.1"
@@ -69,6 +70,8 @@ class Handler(BaseHTTPRequestHandler):
                     "/api/network/config",
                     "/api/network/renew-ips",
                     "/api/recorder/status",
+                    "/api/recorder/layout",
+                    "/api/recorder/settings",
                     "/api/playback/plan?lt=<uuid>&from=<utc>&to=<utc>",
                     "/api/playback/audio?lt=<uuid>&from=<utc>&to=<utc>",
                 ],
@@ -126,6 +129,20 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(200, build_recorder_status())
             except Exception as exc:
                 self._json(500, {"error": "recorder_status_failed", "detail": str(exc)})
+            return
+
+        if parsed.path == "/api/recorder/layout":
+            try:
+                self._json(200, recording_layout_snapshot())
+            except Exception as exc:
+                self._json(500, {"error": "recording_layout_failed", "detail": str(exc)})
+            return
+
+        if parsed.path == "/api/recorder/settings":
+            try:
+                self._json(200, {"settings": get_recorder_settings()})
+            except Exception as exc:
+                self._json(500, {"error": "recorder_settings_failed", "detail": str(exc)})
             return
 
         if parsed.path == "/api/timeline":
@@ -250,6 +267,15 @@ class Handler(BaseHTTPRequestHandler):
                     end=str(payload.get("end", "")),
                 )
                 self._json(200, {"network": item})
+                return
+            if parsed.path == "/api/recorder/settings":
+                telephone = payload.get("telephone", {})
+                item = update_recorder_settings(
+                    ringing_slots_per_phone=int(telephone.get("ringing_slots_per_phone", 5)),
+                    calling_slots_per_phone=int(telephone.get("calling_slots_per_phone", 4)),
+                    rotation_minutes=int(payload.get("rotation_minutes", 60)),
+                )
+                self._json(200, {"settings": item})
                 return
             self._json(404, {"error": "not_found"})
         except ValueError as exc:

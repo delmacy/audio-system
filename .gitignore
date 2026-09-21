@@ -7,6 +7,7 @@ web/player-app/dist/
 
 # Runtime / test artifacts
 runs/
+recordings/
 .playwright-cli/
 *.log
 
