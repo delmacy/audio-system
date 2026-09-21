@@ -196,10 +196,10 @@ class Handler(BaseHTTPRequestHandler):
             payload = self._read_json_body()
             if parsed.path.startswith("/api/system/services/"):
                 parts = [part for part in parsed.path.split("/") if part]
-                if len(parts) != 4:
+                if len(parts) != 5 or parts[:3] != ["api", "system", "services"]:
                     raise ValueError("Expected /api/system/services/<service>/<action>")
-                service = parts[2]
-                action = parts[3]
+                service = parts[3]
+                action = parts[4]
                 if service not in CONTROLLED_FROM_API:
                     raise ValueError("This service is supervised by the unified launcher and cannot be controlled from this page")
                 if action == "start":
