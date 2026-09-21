@@ -207,10 +207,14 @@ def main() -> None:
     if not services:
         raise RuntimeError("No enabled TEL service with SIP URI is registered")
     services.sort(key=lambda item: str(item.get("label")))
-    service = services[0]
-    recorded_user = sip_user(str(service["sip_uri"]))
+    callee_service = services[0]
+    caller_service = services[1] if len(services) > 1 else None
+    recorded_user = sip_user(str(callee_service["sip_uri"]))
+    caller_user = sip_user(str(caller_service["sip_uri"])) if caller_service else "9901"
     if not recorded_user:
-        raise RuntimeError(f"Could not derive SIP user from {service['sip_uri']!r}")
+        raise RuntimeError(f"Could not derive SIP user from {callee_service['sip_uri']!r}")
+    if caller_service and not caller_user:
+        raise RuntimeError(f"Could not derive SIP user from {caller_service['sip_uri']!r}")
 
     run, recorder = current_recorder_state()
     recorder_audit = Path(str(recorder["audit"])).resolve()
@@ -230,7 +234,7 @@ def main() -> None:
     call_id = f"e2e-{uuid.uuid4()}@audio-system.local"
     branch = "z9hG4bK-" + uuid.uuid4().hex
     from_tag = uuid.uuid4().hex[:10]
-    remote_user = "9901"
+    remote_user = caller_user
     local_sip = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     local_sip.bind(("127.0.0.1", 0))
     local_sip_port = int(local_sip.getsockname()[1])
@@ -288,9 +292,20 @@ def main() -> None:
             "RPS active recording session",
         )
         session = next(session for session in active["sessions"] if session.get("call_id") == call_id)
-        route_key = str(session["route_key"])
-        track_index = int(session["track_index"])
-        slot_index = int(session["slot_index"])
+        legs = list(session.get("legs") or [])
+        if not legs:
+            raise RuntimeError(f"RPS session has no recording legs: {session!r}")
+
+        received_legs = [leg for leg in legs if leg.get("direction") == "received"]
+        calling_legs = [leg for leg in legs if leg.get("direction") == "calling"]
+        if len(received_legs) != 1:
+            raise RuntimeError(f"Expected exactly one received leg; got {received_legs!r}")
+        if caller_service and len(calling_legs) != 1:
+            raise RuntimeError(f"Expected exactly one calling leg for registered caller; got {calling_legs!r}")
+        if not caller_service and calling_legs:
+            raise RuntimeError(f"Unregistered caller unexpectedly created calling leg: {calling_legs!r}")
+
+        selected_legs = calling_legs + received_legs
 
         rtp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sequence = random.randint(1, 60000)
@@ -330,12 +345,16 @@ def main() -> None:
             "RPS session close",
         )
 
-        events = wait_for_recorder_events(
-            recorder_audit,
-            route_key,
-            {"MEDIA_START", "MEDIA_END"},
-            timeout=8.0,
-        )
+        all_recorder_events: dict[str, list[dict]] = {}
+        for leg in selected_legs:
+            route_key = str(leg["route_key"])
+            all_recorder_events[route_key] = wait_for_recorder_events(
+                recorder_audit,
+                route_key,
+                {"MEDIA_START", "MEDIA_END"},
+                timeout=8.0,
+            )
+
         size_after = partial_mxf.stat().st_size if partial_mxf.is_file() else 0
         if size_after <= size_before:
             raise RuntimeError(
@@ -347,16 +366,24 @@ def main() -> None:
         if not {"RPS_RECORDING_OPEN", "RPS_RECORDING_CLOSED"}.issubset(rps_kinds):
             raise RuntimeError(f"RPS audit incomplete for {call_id}: {sorted(rps_kinds)}")
 
-        recorder_kinds = {str(item.get("event")) for item in events}
         print("RPS TELEPHONE E2E: PASS")
-        print(f"  service={service['label']} sip_user={recorded_user} remote_party={remote_user}")
-        print(f"  direction=received slot={slot_index} track_index={track_index}")
-        print(f"  route={route_key}")
+        print(
+            f"  caller={caller_service['label'] if caller_service else remote_user} "
+            f"callee={callee_service['label']} call_id={call_id}"
+        )
+        print(f"  recording_legs={len(selected_legs)}")
+        for leg in selected_legs:
+            route_key = str(leg["route_key"])
+            kinds = {str(item.get("event")) for item in all_recorder_events[route_key]}
+            print(
+                f"  leg direction={leg.get('direction')} service={leg.get('service_id')} "
+                f"slot={leg.get('slot_index')} track_index={leg.get('track_index')} "
+                f"route={route_key} events={','.join(sorted(kinds))}"
+            )
         print(f"  rtp_packets_sent={packets} duration_seconds={packets * 0.020:.2f}")
         print(f"  mxf_partial={partial_mxf}")
         print(f"  mxf_bytes_before={size_before} mxf_bytes_after={size_after}")
-        print(f"  recorder_events={','.join(sorted(recorder_kinds))}")
-        print(f"  call_id={call_id}")
+        print(f"  dual_registered={bool(caller_service)}")
     finally:
         local_sip.close()
 
