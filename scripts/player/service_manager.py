@@ -168,6 +168,90 @@ def _windows_port_owner_pids(port: int, protocol: str = "tcp") -> set[int]:
     return pids
 
 
+def _windows_process_pids_matching(patterns: tuple[str, ...]) -> set[int]:
+    if os.name != "nt" or not patterns:
+        return set()
+
+    escaped = [pattern.replace("'", "''") for pattern in patterns]
+    conditions = " -or ".join(
+        f"$_.CommandLine -like '*{pattern}*'" for pattern in escaped
+    )
+    command = (
+        "Get-CimInstance Win32_Process -ErrorAction SilentlyContinue "
+        f"| Where-Object {{ $_.CommandLine -and ({conditions}) }} "
+        "| Select-Object -ExpandProperty ProcessId"
+    )
+    completed = subprocess.run(
+        ["powershell.exe", "-NoProfile", "-Command", command],
+        capture_output=True,
+        text=True,
+        check=False,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+
+    result: set[int] = set()
+    for line in completed.stdout.splitlines():
+        line = line.strip()
+        if line.isdigit():
+            pid = int(line)
+            if pid > 0:
+                result.add(pid)
+    return result
+
+
+def _cleanup_legacy_dev_supervisors() -> list[int]:
+    """Stop the old auto-restarting dev supervisor before clean startup."""
+    if os.name != "nt":
+        return []
+
+    project_name = ROOT.name
+    candidates = _windows_process_pids_matching((
+        "Start-AudioSystemDev.ps1",
+        "dev:supervisor",
+    ))
+    current_pid = os.getpid()
+    killed: list[int] = []
+
+    for pid in sorted(candidates):
+        if pid <= 0 or pid == current_pid:
+            continue
+
+        # Avoid touching similarly named processes from another checkout when
+        # command-line inspection can prove that this project is not involved.
+        command = (
+            f"$p=Get-CimInstance Win32_Process -Filter \"ProcessId={pid}\" "
+            "-ErrorAction SilentlyContinue; if($p){$p.CommandLine}"
+        )
+        completed = subprocess.run(
+            ["powershell.exe", "-NoProfile", "-Command", command],
+            capture_output=True,
+            text=True,
+            check=False,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        command_line = completed.stdout.strip().lower()
+        root_text = str(ROOT).lower()
+        belongs_here = (
+            root_text in command_line
+            or project_name.lower() in command_line
+            or "start-audiosystemdev.ps1" in command_line
+        )
+        if not belongs_here:
+            continue
+
+        if _pid_alive(pid):
+            _kill_tree(pid)
+            killed.append(pid)
+
+    for pid in killed:
+        for _ in range(50):
+            if not _pid_alive(pid):
+                break
+            time.sleep(0.1)
+
+    return killed
+
+
 def _windows_process_pids_by_name(process_name: str) -> set[int]:
     if os.name != "nt":
         return set()
@@ -508,12 +592,23 @@ def system_status() -> dict:
 
 
 def start_system() -> dict:
+    legacy_supervisors = _cleanup_legacy_dev_supervisors()
+    if legacy_supervisors:
+        # Give child Vite/API processes from the old supervisor enough time to
+        # disappear before per-service port cleanup begins.
+        time.sleep(0.75)
+
     results = {}
     for name in SERVICE_ORDER:
         results[name] = start_service(name, clean_start=True)
         # API/frontend need a short settling window before their dependents.
         time.sleep(0.5 if name in {"api", "frontend"} else 0.2)
-    return {"action": "start_system", "results": results, "status": system_status()}
+    return {
+        "action": "start_system",
+        "legacy_supervisors_stopped": legacy_supervisors,
+        "results": results,
+        "status": system_status(),
+    }
 
 
 def stop_system() -> dict:
