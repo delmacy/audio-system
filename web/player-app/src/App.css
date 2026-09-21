@@ -2107,3 +2107,26 @@ button:focus-visible,input:focus-visible,select:focus-visible,[role=slider]:focu
   .registry-modal-form{grid-template-columns:1fr}
   .registry-modal-form label.wide{grid-column:auto}
 }
+
+
+.registry-inline-form.gateway{
+  grid-template-columns:1.2fr .9fr 110px 1.5fr auto;
+}
+.registry-inline-form.sip-service{
+  grid-template-columns:110px 1fr 1.5fr 1fr auto;
+}
+.registry-row-icon.gateway{background:#f1efff;color:#7059c9}
+.registry-kind.gateway{background:#f1efff;color:#6650b8}
+.registry-row-rtsp{
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+  font-family:ui-monospace,SFMono-Regular,Consolas,monospace;
+  font-size:8px;
+}
+.registry-row.legacy{background:#fffaf0}
+.registry-row.legacy .registry-row-state{color:#a36a1f}
+.registry-row.legacy .registry-row-state i{background:#d99a3d}
+@media(max-width:1100px){
+  .registry-inline-form.gateway,.registry-inline-form.sip-service{grid-template-columns:1fr 1fr}
+}
