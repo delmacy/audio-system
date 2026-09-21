@@ -19,7 +19,14 @@ param(
     [double]$ToneHz = 0,
     [double]$ToneLevelDbfs = -12,
     [string]$ScheduleFile = '',
-    [string]$RouteKey = ''
+    [string]$RouteKey = '',
+    [string]$InteractionId = '',
+    [string]$LegId = '',
+    [string]$InitialAudioEvent = '',
+    [string]$MediaStartUtc = '',
+    [int]$AnswerAfterMs = -1,
+    [bool]$PauseAfterBurst = $true,
+    [switch]$SendHangupEvent
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -124,9 +131,15 @@ $sdp = @(
     ''
 ) -join "`r`n"
 
+$eventHeaders = ''
+if ($InteractionId) { $eventHeaders += "X-Interaction-Id: $InteractionId`r`n" }
+if ($LegId) { $eventHeaders += "X-Leg-Id: $LegId`r`n" }
+if ($InitialAudioEvent) { $eventHeaders += "X-Audio-Event: $InitialAudioEvent`r`n" }
+if ($MediaStartUtc) { $eventHeaders += "X-Media-Start-Utc: $MediaStartUtc`r`n" }
+
 try {
     $resp = Send-RtspRequest $client ("OPTIONS $uri RTSP/1.0`r`nCSeq: $cseq`r`n`r`n"); $cseq++
-    $resp = Send-RtspRequest $client ("ANNOUNCE $uri RTSP/1.0`r`nCSeq: $cseq`r`nContent-Type: application/sdp`r`nContent-Length: $([Text.Encoding]::ASCII.GetByteCount($sdp))`r`n`r`n$sdp"); $cseq++
+    $resp = Send-RtspRequest $client ("ANNOUNCE $uri RTSP/1.0`r`nCSeq: $cseq`r`n${eventHeaders}Content-Type: application/sdp`r`nContent-Length: $([Text.Encoding]::ASCII.GetByteCount($sdp))`r`n`r`n$sdp"); $cseq++
     $session = Get-SessionIdFromResponse $resp
     if (-not $session) { throw "ANNOUNCE did not return Session. response=$resp" }
     $resp = Send-RtspRequest $client ("SETUP $uri RTSP/1.0`r`nCSeq: $cseq`r`nSession: $session`r`nTransport: RTP/AVP;unicast;client_port=$LocalRtpPort-$($LocalRtpPort+1);mode=record`r`n`r`n"); $cseq++
@@ -137,6 +150,8 @@ try {
     $audioOffset = 0
     $seq = 1000; [uint32]$ts = 0; $activePackets = 0; $pausedPackets = 0; $keepalives = 0
     $executedBursts = 0
+    $activeElapsedMs = 0
+    $answerSent = $false
     foreach($burst in $scheduleBursts){
         $activeMs = [Math]::Max(20, [int]$burst.on_ms)
         $gapMs = [Math]::Max(0, [int]$burst.off_ms)
@@ -149,13 +164,21 @@ try {
                 $audioOffset += 160
             }
             $pkt = New-RtpPacket -Seq $seq -Timestamp $ts -Payload $payload
-            [void]$udp.Send($pkt,$pkt.Length,$remote); $seq++; $ts += 160; $activePackets++; Start-Sleep -Milliseconds 20
+            [void]$udp.Send($pkt,$pkt.Length,$remote); $seq++; $ts += 160; $activePackets++; $activeElapsedMs += 20
+            if (-not $answerSent -and $AnswerAfterMs -ge 0 -and $activeElapsedMs -ge $AnswerAfterMs) {
+                $answerUtc = [DateTimeOffset]::UtcNow.ToString('o')
+                $resp = Send-RtspRequest $client ("SET_PARAMETER $uri RTSP/1.0`r`nCSeq: $cseq`r`nSession: $session`r`nX-Audio-Event: ANSWER`r`nX-Event-Utc: $answerUtc`r`n`r`n"); $cseq++
+                $answerSent = $true
+            }
+            Start-Sleep -Milliseconds 20
         }
         $executedBursts++
-        $resp = Send-RtspRequest $client ("PAUSE $uri RTSP/1.0`r`nCSeq: $cseq`r`nSession: $session`r`n`r`n"); $cseq++
-        for($q=0;$q -lt $PausedProbePackets;$q++){
-            $pkt = New-RtpPacket -Seq $seq -Timestamp $ts -Payload $payload
-            [void]$udp.Send($pkt,$pkt.Length,$remote); $seq++; $ts += 160; $pausedPackets++
+        if ($PauseAfterBurst) {
+            $resp = Send-RtspRequest $client ("PAUSE $uri RTSP/1.0`r`nCSeq: $cseq`r`nSession: $session`r`n`r`n"); $cseq++
+            for($q=0;$q -lt $PausedProbePackets;$q++){
+                $pkt = New-RtpPacket -Seq $seq -Timestamp $ts -Payload $payload
+                [void]$udp.Send($pkt,$pkt.Length,$remote); $seq++; $ts += 160; $pausedPackets++
+            }
         }
         $elapsed=0
         while($elapsed -lt $gapMs){
@@ -164,6 +187,10 @@ try {
             $elapsed += $sleepMs
             $resp = Send-RtspRequest $client ("GET_PARAMETER $uri RTSP/1.0`r`nCSeq: $cseq`r`nSession: $session`r`n`r`n"); $cseq++; $keepalives++
         }
+    }
+    if ($SendHangupEvent) {
+        $hangupUtc = [DateTimeOffset]::UtcNow.ToString('o')
+        $resp = Send-RtspRequest $client ("SET_PARAMETER $uri RTSP/1.0`r`nCSeq: $cseq`r`nSession: $session`r`nX-Audio-Event: HANGUP`r`nX-Event-Utc: $hangupUtc`r`n`r`n"); $cseq++
     }
     $resp = Send-RtspRequest $client ("TEARDOWN $uri RTSP/1.0`r`nCSeq: $cseq`r`nSession: $session`r`n`r`n"); $cseq++
     Write-Host ('SERVICE MONO SIMULATOR: PASS session={0} service={1} media_flow={2} bursts={3} active_packets={4} paused_probe_packets={5} keepalives={6} scheduled={7}' -f $session,$ServiceId,$MediaFlow,$executedBursts,$activePackets,$pausedPackets,$keepalives,[bool]$ScheduleFile) -ForegroundColor Green
