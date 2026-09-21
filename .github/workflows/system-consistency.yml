@@ -1,0 +1,144 @@
+name: System consistency
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: consistency-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  application:
+    name: Python, KLV and frontend
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Compile Python sources
+        run: python -m compileall -q scripts/player scripts/gateway
+
+      - name: Growing MXF KLV tests
+        working-directory: scripts/player
+        run: python -m unittest -v test_growing_mxf.py
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Lint frontend
+        run: npm run lint
+
+      - name: Build frontend
+        run: npm run build
+
+  package-smokes:
+    name: Static package consistency
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Closure handoff smoke
+        shell: pwsh
+        run: ./scripts/closure/Invoke-ClosureBacklogSmoke.ps1
+
+      - name: Release packaging smoke
+        shell: pwsh
+        run: ./scripts/release/Invoke-FinalPocPackagingSmoke.ps1 -Json
+
+  native-recorder:
+    name: Native recorder and MXF build
+    runs-on: windows-latest
+    timeout-minutes: 35
+    env:
+      GSTREAMER_VERSION: '1.28.7'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Cache GStreamer installer
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}\gstreamer-1.28.7.exe
+          key: gstreamer-msvc-x86_64-1.28.7
+
+      - name: Install GStreamer development bundle
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $installer = Join-Path $env:RUNNER_TEMP "gstreamer-$env:GSTREAMER_VERSION.exe"
+          $url = "https://gstreamer.freedesktop.org/data/pkg/windows/$env:GSTREAMER_VERSION/msvc/gstreamer-1.0-msvc-x86_64-$env:GSTREAMER_VERSION.exe"
+          if (-not (Test-Path -LiteralPath $installer)) {
+            Invoke-WebRequest -UseBasicParsing -Uri $url -OutFile $installer
+          }
+
+          $gstRoot = Join-Path $env:LOCALAPPDATA 'Programs\gstreamer\1.0\msvc_x86_64'
+          $args = @(
+            '/VERYSILENT',
+            '/NORESTART',
+            '/CURRENTUSER',
+            '/TYPE=devel',
+            "/DIR=$gstRoot"
+          )
+          $process = Start-Process -FilePath $installer -ArgumentList $args -Wait -PassThru
+          if ($process.ExitCode -ne 0) {
+            throw "GStreamer installer failed with exit code $($process.ExitCode)"
+          }
+
+          "GSTREAMER_ROOT_X86_64=$gstRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "GSTREAMER_1_0_ROOT_MSVC_X86_64=$gstRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          (Join-Path $gstRoot 'bin') | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Verify GStreamer toolchain
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $gst = Join-Path $env:GSTREAMER_ROOT_X86_64 'bin\gst-inspect-1.0.exe'
+          $props = Join-Path $env:GSTREAMER_ROOT_X86_64 'share\vs\2010\libs\gstreamer-1.0.props'
+          if (-not (Test-Path -LiteralPath $gst)) { throw "gst-inspect missing: $gst" }
+          if (-not (Test-Path -LiteralPath $props)) { throw "GStreamer VS props missing: $props" }
+          & $gst --version
+          if ($LASTEXITCODE -ne 0) { throw 'gst-inspect version check failed' }
+
+      - name: Build patched MXF identity plugin
+        shell: pwsh
+        run: ./scripts/mxf/Build-MxfIdentityPlugin.ps1
+
+      - name: Verify generated mux contains growing-MXF watermark patch
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $mux = Get-Content -Raw -LiteralPath './src/mxf-identity-plugin/buildsrc/mxfmux.c'
+          foreach ($term in @(
+            'GstClockTime source_pts = pts;',
+            'GST_BUFFER_OFFSET_END (outbuf) = pad->pos + 1;',
+            'read-safe growing-MXF watermark'
+          )) {
+            if (-not $mux.Contains($term)) {
+              throw "Generated mxfmux.c lost required patch marker: $term"
+            }
+          }
+
+      - name: Build recorder host and run selftest
+        shell: pwsh
+        run: ./scripts/recorder/Build-RecorderHost.ps1
