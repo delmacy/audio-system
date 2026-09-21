@@ -282,6 +282,9 @@ mxf_alaw_get_descriptor (GstPadTemplate * tmpl, GstCaps * caps,
     return NULL;
   }
 
+  /* CCITT/ITU-T G.711 A-law uses one 8-bit codeword per sample. */
+  ret->quantization_bits = 8;
+
   *handler = mxf_alaw_write_func;
 
   md = g_new0 (ALawMappingData, 1);
