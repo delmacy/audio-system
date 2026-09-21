@@ -78,6 +78,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Set up Python for playback probe
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
       - name: Cache GStreamer installer
         uses: actions/cache@v4
         with:
@@ -144,3 +149,11 @@ jobs:
       - name: Build recorder host and run selftest
         shell: pwsh
         run: ./scripts/recorder/Build-RecorderHost.ps1
+
+      - name: Build native MXF inspector
+        shell: pwsh
+        run: ./scripts/mxf/Build-NativeMxfLab.ps1
+
+      - name: Growing MXF read-while-recording E2E
+        shell: pwsh
+        run: ./scripts/recorder/Invoke-GrowingMxfCiSmoke.ps1
