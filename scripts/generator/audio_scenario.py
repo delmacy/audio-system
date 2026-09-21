@@ -20,6 +20,29 @@ MXF_AUDIO_EDIT_UNIT_MS = 100
 SCHEMA = "audio-system.tone-scenario.v1"
 RESOLVED_SCHEMA = "audio-system.tone-scenario-resolved.v1"
 MODES = {"continuous", "pulsed", "random_pulsed"}
+AUDIO_FORMAT = {
+    "codec": "CCITT_ALAW",
+    "standard": "ITU-T G.711 A-law",
+    "rtp_encoding": "PCMA",
+    "sample_rate_hz": 8000,
+    "bits_per_sample": 8,
+    "channels": 1,
+    "channel_layout": "mono",
+    "rtp_payload_type": 8,
+}
+
+
+def _validate_audio_format(value: Any) -> dict:
+    if value is None:
+        return dict(AUDIO_FORMAT)
+    if not isinstance(value, dict):
+        raise ValueError("audio_format must be an object")
+    for key, expected in AUDIO_FORMAT.items():
+        if key in value and value[key] != expected:
+            raise ValueError(
+                f"Unsupported audio_format.{key}={value[key]!r}; required {expected!r}"
+            )
+    return dict(AUDIO_FORMAT)
 
 
 def _positive_int(value: Any, name: str, *, allow_zero: bool = False) -> int:
@@ -166,6 +189,7 @@ def resolve_track(track: dict, *, duration_ms: int, scenario_seed: int, index: i
         "frequency_hz": frequency_hz,
         "level_dbfs": level_dbfs,
         "seed": track_seed,
+        "audio_format": dict(AUDIO_FORMAT),
         "start_offset_ms": start_ms,
         "bursts": bursts,
         "expected_intervals": intervals,
@@ -177,6 +201,7 @@ def resolve_scenario(scenario: dict) -> dict:
     if schema != SCHEMA:
         raise ValueError(f"Unsupported scenario schema: {schema}")
     duration_ms = _quantize_ms(_positive_int(scenario.get("duration_ms", 10_000), "duration_ms"))
+    audio_format = _validate_audio_format(scenario.get("audio_format"))
     seed = int(scenario.get("seed", 1))
     tracks = scenario.get("tracks")
     if not isinstance(tracks, list) or not tracks:
@@ -190,6 +215,7 @@ def resolve_scenario(scenario: dict) -> dict:
         "schema": RESOLVED_SCHEMA,
         "source_schema": SCHEMA,
         "duration_ms": duration_ms,
+        "audio_format": audio_format,
         "seed": seed,
         "track_count": len(resolved),
         "tracks": resolved,
@@ -217,6 +243,8 @@ def selftest() -> None:
     one = resolve_scenario(scenario)
     two = resolve_scenario(scenario)
     assert one == two
+    assert one["audio_format"] == AUDIO_FORMAT
+    assert one["tracks"][0]["audio_format"] == AUDIO_FORMAT
     assert one["tracks"][0]["expected_intervals"] == [{"start_ms": 0, "end_ms": 5000, "duration_ms": 5000}]
     assert len(one["tracks"][1]["bursts"]) > 2
     assert one["tracks"][2]["start_offset_ms"] % MXF_AUDIO_EDIT_UNIT_MS == 0
