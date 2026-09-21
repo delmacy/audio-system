@@ -35,7 +35,8 @@ CREATE TABLE IF NOT EXISTS recording_file (
   last_media_utc TEXT,
   closed_utc TEXT,
   size_bytes INTEGER,
-  sha256 TEXT
+  sha256 TEXT,
+  category TEXT
 );
 
 CREATE TABLE IF NOT EXISTS track_instance (
@@ -51,6 +52,8 @@ CREATE TABLE IF NOT EXISTS track_instance (
   codec TEXT NOT NULL DEFAULT 'PCMA',
   sample_rate_hz INTEGER NOT NULL DEFAULT 8000,
   channels INTEGER NOT NULL DEFAULT 1,
+  track_role TEXT,
+  slot_index INTEGER,
   UNIQUE(file_id, track_index)
 );
 
@@ -99,3 +102,9 @@ CREATE INDEX IF NOT EXISTS ix_event_timeline
   ON recording_event(logical_track_uuid, event_utc);
 CREATE INDEX IF NOT EXISTS ix_file_window
   ON recording_file(recording_window_start_utc, segment_sequence);
+
+
+CREATE INDEX IF NOT EXISTS ix_file_category_window
+  ON recording_file(category, recording_window_start_utc, segment_sequence);
+CREATE INDEX IF NOT EXISTS ix_track_role
+  ON track_instance(file_id, track_role, slot_index);
