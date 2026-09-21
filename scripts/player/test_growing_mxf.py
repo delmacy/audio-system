@@ -33,13 +33,14 @@ def essence_key(track_ordinal: int) -> bytes:
 
 class GrowingMxfPlaybackTests(unittest.TestCase):
     def test_reads_only_selected_track_and_ignores_structural_gap_payload(self) -> None:
-        track1_audio = bytes([0xD5]) * SAMPLES_PER_EDIT_UNIT
-        track2_audio = bytes([0x55]) * SAMPLES_PER_EDIT_UNIT
+        track1_audio = bytes([0x55]) * SAMPLES_PER_EDIT_UNIT
+        structural_filler = bytes([0xD5]) * SAMPLES_PER_EDIT_UNIT
+        track2_audio = bytes([0x35]) * SAMPLES_PER_EDIT_UNIT
         stream = b"".join([
             klv(bytes.fromhex("060e2b34020501010d01020101020400"), b"metadata"),
             klv(essence_key(1), track1_audio),
             klv(essence_key(2), track2_audio),
-            klv(essence_key(1), b""),
+            klv(essence_key(1), structural_filler),
             klv(essence_key(2), track2_audio),
             klv(essence_key(1), track1_audio),
         ])
@@ -52,14 +53,15 @@ class GrowingMxfPlaybackTests(unittest.TestCase):
                 "mxf": path,
                 "flushed_bytes": len(stream),
                 "track": {"track_index": 0},
+                "timeline_origin_utc": window_start.isoformat().replace("+00:00", "Z"),
                 "intervals": [
                     {
                         "start_utc": window_start.isoformat().replace("+00:00", "Z"),
                         "end_utc": (window_start + timedelta(milliseconds=100)).isoformat().replace("+00:00", "Z"),
                     },
                     {
-                        "start_utc": (window_start + timedelta(seconds=1)).isoformat().replace("+00:00", "Z"),
-                        "end_utc": (window_start + timedelta(seconds=1, milliseconds=100)).isoformat().replace("+00:00", "Z"),
+                        "start_utc": (window_start + timedelta(milliseconds=200)).isoformat().replace("+00:00", "Z"),
+                        "end_utc": (window_start + timedelta(milliseconds=300)).isoformat().replace("+00:00", "Z"),
                     },
                 ],
             }
@@ -68,6 +70,9 @@ class GrowingMxfPlaybackTests(unittest.TestCase):
 
         self.assertEqual(len(pcm) // 2, 2 * SAMPLES_PER_EDIT_UNIT)
         self.assertNotEqual(pcm, b"\x00" * len(pcm))
+        first = pcm[: SAMPLES_PER_EDIT_UNIT * 2]
+        second = pcm[SAMPLES_PER_EDIT_UNIT * 2 :]
+        self.assertEqual(first, second)
 
     def test_stops_after_media_duration_confirmed_by_audit(self) -> None:
         audio = bytes([0xD5]) * SAMPLES_PER_EDIT_UNIT
@@ -85,6 +90,7 @@ class GrowingMxfPlaybackTests(unittest.TestCase):
                 "mxf": path,
                 "flushed_bytes": len(stream),
                 "track": {"track_index": 0},
+                "timeline_origin_utc": window_start.isoformat().replace("+00:00", "Z"),
                 "intervals": [{
                     "start_utc": window_start.isoformat().replace("+00:00", "Z"),
                     "end_utc": (window_start + timedelta(milliseconds=200)).isoformat().replace("+00:00", "Z"),
