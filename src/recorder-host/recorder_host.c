@@ -133,6 +133,7 @@ typedef struct HostConfig {
     int shared_mxf_by_output;
     char topology_watch_file[4096];
     unsigned long long topology_revision;
+    char shutdown_watch_file[4096];
 } HostConfig;
 
 struct SharedMuxGroup {
@@ -459,6 +460,8 @@ static int parse_host_config(int argc, char **argv, RecorderHost *host) {
         (v = arg_value(argc, argv, "--topology-watch-file")) ? v : "");
     host->cfg.topology_revision = _strtoui64(
         (v = arg_value(argc, argv, "--topology-revision")) ? v : "0", NULL, 10);
+    safe_copy(host->cfg.shutdown_watch_file, sizeof(host->cfg.shutdown_watch_file),
+        (v = arg_value(argc, argv, "--shutdown-watch-file")) ? v : "");
     if (!host->cfg.audit_path[0] || !host->cfg.plugin_dll[0]) return 0;
     if (host->cfg.rtsp_port < 1 || host->cfg.rtsp_port > 65535 || host->cfg.max_seconds < 1) return 0;
     if (host->cfg.session_map_path[0]) return load_session_map(host, host->cfg.session_map_path);
@@ -1671,6 +1674,13 @@ static int topology_change_due(RecorderHost *host, unsigned long long *revision_
     return 1;
 }
 
+static int shutdown_requested_by_file(RecorderHost *host) {
+    DWORD attrs;
+    if (!host || !host->cfg.shutdown_watch_file[0]) return 0;
+    attrs = GetFileAttributesA(host->cfg.shutdown_watch_file);
+    return attrs != INVALID_FILE_ATTRIBUTES && !(attrs & FILE_ATTRIBUTE_DIRECTORY);
+}
+
 static int run_server(RecorderHost *host) {
     ULONGLONG started = GetTickCount64();
     int timeout_finalization_started = 0;
@@ -1757,6 +1767,19 @@ static int run_server(RecorderHost *host) {
             }
         }
         if (all_sessions_finalized(host)) host->shutdown_requested = 1;
+
+        if (!timeout_finalization_started && shutdown_requested_by_file(host)) {
+            timeout_finalization_started = 1;
+            audit_event(host, NULL, "SHUTDOWN_REQUESTED",
+                "External shutdown requested; gracefully finalizing every active recorder route");
+            for (i = 0; i < host->session_count; i++) {
+                if (!host->sessions[i].finalized && host->sessions[i].finalize_state == 0) {
+                    begin_finalize_session(&host->sessions[i],
+                        "External recorder shutdown requested");
+                }
+            }
+        }
+
         if (!timeout_finalization_started && host->cfg.shared_mxf_by_output) {
             unsigned long long requested_revision = 0;
             if (topology_change_due(host, &requested_revision)) {
@@ -1909,7 +1932,7 @@ int main(int argc, char **argv) {
     gst_init(&argc, &argv);
     if (has_arg(argc, argv, "selftest") || (argc > 1 && strcmp(argv[1], "selftest") == 0)) return selftest(argc, argv);
     if (!parse_host_config(argc, argv, &host)) {
-        g_printerr("Usage multi: recorder-host --bind-ip IP --rtsp-port PORT --session-map sessions.tsv --audit audit.jsonl --plugin-dll gstmxfidentity.dll [--ready-file FILE] [--recorder-id ID] [--max-seconds N] [--rotate-window-after-pauses N --rotate-window-max-count N] [--shared-mxf-by-output] [--topology-watch-file FILE --topology-revision N]\n");
+        g_printerr("Usage multi: recorder-host --bind-ip IP --rtsp-port PORT --session-map sessions.tsv --audit audit.jsonl --plugin-dll gstmxfidentity.dll [--ready-file FILE] [--recorder-id ID] [--max-seconds N] [--rotate-window-after-pauses N --rotate-window-max-count N] [--shared-mxf-by-output] [--topology-watch-file FILE --topology-revision N] [--shutdown-watch-file FILE]\n");
         g_printerr("Legacy single-session arguments from Phase 3/4 remain supported when --session-map is omitted.\n");
         return 2;
     }
