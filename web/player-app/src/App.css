@@ -2300,3 +2300,91 @@ button:focus-visible,input:focus-visible,select:focus-visible,[role=slider]:focu
   .recorder-page-header{flex-direction:column}
   .recorder-overview-grid,.recorder-connectivity-grid,.recorder-future-grid{grid-template-columns:1fr}
 }
+
+
+.recorder-three-files{
+  display:grid;
+  grid-template-columns:repeat(3,minmax(0,1fr));
+  gap:10px;
+  padding:14px;
+}
+.recorder-mxf-card{
+  min-width:0;
+  display:grid;
+  gap:13px;
+  padding:14px;
+  border:1px solid #dfe8f0;
+  border-radius:10px;
+  background:#fcfdff;
+}
+.recorder-mxf-title{display:flex;align-items:center;gap:9px}
+.recorder-mxf-title>div{display:grid;gap:2px}
+.recorder-mxf-title strong{font-size:11px;color:#304b64}
+.recorder-mxf-title small{font-size:8px;color:#8796a5}
+.recorder-mxf-icon{width:31px;height:31px;display:grid;place-items:center;border-radius:8px;background:#edf5fd;color:#2374bb}
+.recorder-mxf-icon.radio{background:#eef5ff;color:#246fc1}
+.recorder-mxf-icon.telephone{background:#eef9f2;color:#258c58}
+.recorder-mxf-file{min-width:0;display:grid;gap:3px}
+.recorder-mxf-file>span{font-size:7px;text-transform:uppercase;color:#8a9aa9}
+.recorder-mxf-file>strong{font-size:12px;color:#334e68;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.recorder-mxf-file>small{font:7px ui-monospace,SFMono-Regular,Consolas,monospace;color:#8999a8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.recorder-mxf-foot{display:flex;justify-content:space-between;gap:8px;color:#8997a4;font-size:8px}
+.recorder-mxf-foot>span:first-child{display:flex;align-items:center;gap:5px}
+.recorder-mxf-foot i{width:6px;height:6px;border-radius:50%;background:#b8c2cb}
+.recorder-mxf-foot .exists i{background:#25a162}
+
+.recorder-storage-layout{
+  display:grid;
+  grid-template-columns:minmax(240px,.8fr) 1.2fr;
+  gap:16px;
+  padding:15px;
+}
+.recorder-storage-layout>div{display:grid;align-content:start;gap:5px}
+.recorder-storage-layout span{font-size:8px;text-transform:uppercase;color:#8998a7}
+.recorder-storage-layout strong{font:10px ui-monospace,SFMono-Regular,Consolas,monospace;color:#415b73;overflow-wrap:anywhere}
+.recorder-storage-layout code{
+  display:block;
+  padding:12px 14px;
+  border:1px solid #e3eaf1;
+  border-radius:9px;
+  background:#f8fafc;
+  color:#567087;
+  font-size:9px;
+  line-height:1.55;
+}
+
+.recorder-phone-config{
+  display:grid;
+  grid-template-columns:1fr 1fr 1fr 1fr auto;
+  gap:10px;
+  align-items:end;
+  padding:14px;
+}
+.recorder-phone-config label{display:grid;gap:5px;font-size:8px;font-weight:700;color:#60758a}
+.recorder-phone-config label>small{font-size:7px;font-weight:500;color:#8a98a6}
+.recorder-phone-config input{
+  height:35px;border:1px solid #d6e1eb;border-radius:7px;background:#fff;padding:0 9px;color:#2d455d;font-size:10px
+}
+.recorder-input-unit{display:grid;grid-template-columns:1fr 38px}
+.recorder-input-unit input{border-radius:7px 0 0 7px}
+.recorder-input-unit span{display:grid;place-items:center;border:1px solid #d6e1eb;border-left:0;border-radius:0 7px 7px 0;background:#f7f9fb;color:#7c8d9e;font-size:8px}
+.recorder-phone-capacity-summary{
+  min-height:54px;display:grid;align-content:center;gap:2px;padding:0 10px;border:1px solid #dfe7ee;border-radius:8px;background:#f9fbfd
+}
+.recorder-phone-capacity-summary span{font-size:7px;text-transform:uppercase;color:#8b99a7}
+.recorder-phone-capacity-summary strong{font-size:12px;color:#344f68}
+.recorder-phone-capacity-summary small{font-size:7px;color:#8797a6}
+.recorder-save-config{
+  height:35px;display:flex;align-items:center;gap:6px;border:1px solid #1473db;border-radius:7px;background:#1473db;color:#fff;padding:0 11px;font-size:9px;font-weight:750
+}
+.recorder-capacity-note{
+  padding:10px 14px;border-top:1px solid #e9eef3;background:#fbfdff;color:#74889a;font-size:8px;line-height:1.45
+}
+
+@media(max-width:1050px){
+  .recorder-three-files{grid-template-columns:1fr}
+  .recorder-phone-config{grid-template-columns:1fr 1fr}
+}
+@media(max-width:700px){
+  .recorder-storage-layout,.recorder-phone-config{grid-template-columns:1fr}
+}
