@@ -1,8 +1,8 @@
-"""Real playback boundary for closed operational Recorder MXFs.
+"""Playback boundary for finalized and read-safe growing Recorder MXFs.
 
-This module resolves a LogicalTrackUUID against operational recorder state/audit,
-decodes the actual MXF audio with FFmpeg, and builds a synchronized PCM WAV over
-an explicit UTC window. Gaps are presentation silence, never evidence audio.
+Finalized MXFs use FFmpeg. Open MXFs are read only through the recorder-published
+watermark and their A-law essence KLVs are placed by recorder-audit UTC intervals.
+Gaps are presentation silence, never evidence audio.
 """
 
 from __future__ import annotations
@@ -135,7 +135,7 @@ def _load_growing_candidate(run: Path, track: dict, events: list[dict],
             return None
         flushed_bytes = min(flushed_bytes, partial.stat().st_size)
         timeline_origin = parse_utc(str(lock.get("timeline_origin_utc") or lock["recording_window_start_utc"]))
-        confirmed_end = timeline_origin + timedelta(microseconds=committed_position_ns / 1000)
+        confirmed_end = timeline_origin + timedelta(microseconds=committed_position_ns // 1000)
         if not _range_overlaps(timeline_origin, confirmed_end, from_utc, to_utc):
             return None
         matching = _matching_events(track, events)
