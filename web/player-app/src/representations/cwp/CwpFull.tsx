@@ -1,5 +1,5 @@
 import { ChevronRight, Monitor, Phone, Radio, Wrench, FileText } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { TelephoneDialer } from '@/representations/telephone/TelephoneDialer'
 import type { CwpConfig, ServiceConfig, SimulatorMode } from '@/features/simulator/model'
 
@@ -35,15 +35,21 @@ export function CwpFull({
   const config = cwp[mode]
   const ownRadios = config.services.filter(service => service.kind === 'RADIO')
   const ownTelephones = config.services.filter(service => service.kind === 'TEL')
-  const allRadios = useMemo(() => uniqueServices((registeredRadios ?? ownRadios).filter(service => service.kind === 'RADIO')), [registeredRadios, ownRadios])
-  const allTelephones = useMemo(() => uniqueServices((registeredTelephones ?? ownTelephones).filter(service => service.kind === 'TEL')), [registeredTelephones, ownTelephones])
+  const allRadios = uniqueServices((registeredRadios ?? ownRadios).filter(service => service.kind === 'RADIO'))
+  const allTelephones = uniqueServices((registeredTelephones ?? ownTelephones).filter(service => service.kind === 'TEL'))
   const defaultActive = ownRadios.filter(service => service.status === 'active').map(service => service.id)
   const [localActiveRadioIds, setLocalActiveRadioIds] = useState(defaultActive)
   const [dialerOpen, setDialerOpen] = useState(false)
 
   useEffect(() => {
-    if (!activeRadioIds) setLocalActiveRadioIds(defaultActive)
-  }, [cwp.id, mode])
+    if (activeRadioIds === undefined) {
+      setLocalActiveRadioIds(
+        cwp[mode].services
+          .filter(service => service.kind === 'RADIO' && service.status === 'active')
+          .map(service => service.id),
+      )
+    }
+  }, [activeRadioIds, cwp, mode])
 
   const currentActiveRadioIds = activeRadioIds ?? localActiveRadioIds
   const changeActive = (radioId: string, next: boolean) => {
