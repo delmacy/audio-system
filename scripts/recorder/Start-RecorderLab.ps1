@@ -31,8 +31,10 @@ if ([int]$materialized.session_count -le 0) { throw 'Nenhuma track foi materiali
 $map = [string]$materialized.session_map
 $manifestPath = [string]$materialized.manifest
 $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
-$rotationSeconds = [int]$manifest.settings.rotation_minutes * 60
-$effectiveMaxSeconds = if ($MaxSeconds -gt 0) { [Math]::Min($MaxSeconds,$rotationSeconds) } else { $rotationSeconds }
+$windowEnd = [DateTimeOffset]::Parse([string]$manifest.window_end_utc)
+$secondsToBoundary = [Math]::Max(1,[int][Math]::Ceiling(($windowEnd - [DateTimeOffset]::UtcNow).TotalSeconds))
+$effectiveMaxSeconds = if ($MaxSeconds -gt 0) { [Math]::Min($MaxSeconds,$secondsToBoundary) } else { $secondsToBoundary }
+$topologySignal = Join-Path $root 'runs\operational-recorder\topology-change.signal'
 
 $audit = Join-Path $runDir 'recorder-audit.jsonl'
 $ready = Join-Path $runDir 'recorder-ready.json'
@@ -48,7 +50,9 @@ $args = @(
   '--plugin-dll',$plugin,
   '--recorder-id','RECORDER-POC-01',
   '--max-seconds',[string]$effectiveMaxSeconds,
-  '--shared-mxf-by-output'
+  '--shared-mxf-by-output',
+  '--topology-watch-file',$topologySignal,
+  '--topology-revision',[string]$manifest.topology_revision
 )
 
 $proc = Start-Process -FilePath $exe -ArgumentList (ConvertTo-NativeArgumentString $args) -WorkingDirectory $root -WindowStyle Hidden -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
@@ -87,6 +91,9 @@ $state = [ordered]@{
   stderr=$stderr
   max_seconds=$effectiveMaxSeconds
   rotation_minutes=[int]$manifest.settings.rotation_minutes
+  topology_revision=[int]$manifest.topology_revision
+  topology_change_guard_seconds=[int]$manifest.settings.topology_change_guard_seconds
+  window_end_utc=[string]$manifest.window_end_utc
   live_buffer_available=$false
 }
 $statePath = Join-Path $runDir 'operational-recorder-state.json'
