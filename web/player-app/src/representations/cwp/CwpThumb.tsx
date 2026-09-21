@@ -1,11 +1,13 @@
 import { Monitor, X } from 'lucide-react'
 import { useState } from 'react'
 import { CwpFull } from './CwpFull'
-import type { CwpConfig, SimulatorMode } from '@/features/simulator/model'
+import type { CwpConfig, ServiceConfig, SimulatorMode } from '@/features/simulator/model'
 
-export function CwpThumb({ cwp, mode }: {
+export function CwpThumb({ cwp, mode, registeredRadios, registeredTelephones }: {
   cwp: CwpConfig
   mode: SimulatorMode
+  registeredRadios?: ServiceConfig[]
+  registeredTelephones?: ServiceConfig[]
 }) {
   const [open, setOpen] = useState(false)
   const config = cwp[mode]
@@ -27,7 +29,8 @@ export function CwpThumb({ cwp, mode }: {
           <div><span>Operação</span><strong>{cwp.label}</strong></div>
           <button type="button" onClick={() => setOpen(false)} aria-label="Fechar"><X size={18} /></button>
         </header>
-        <CwpFull cwp={cwp} mode={mode} expanded collapsible={false} showConfigActions={false} />
+        <CwpFull cwp={cwp} mode={mode} expanded collapsible={false} showConfigActions={false}
+          registeredRadios={registeredRadios} registeredTelephones={registeredTelephones} />
       </section>
     </div>}
   </>

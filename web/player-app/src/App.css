@@ -1602,3 +1602,154 @@ button:focus-visible,input:focus-visible,select:focus-visible,[role=slider]:focu
   font-weight:700;
   color:#4f7091;
 }
+
+
+/* CWP operation + telephone dialer */
+.cwp-operation-grid{
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:10px;
+  padding:0 14px 14px;
+}
+.cwp-operation-section{
+  overflow:hidden;
+  border:1px solid #dce6ef;
+  border-radius:10px;
+  background:#fbfdff;
+}
+.cwp-operation-section>header{
+  display:flex;
+  align-items:flex-start;
+  gap:8px;
+  padding:10px 11px;
+  border-bottom:1px solid #e5ecf3;
+  background:#f6f9fc;
+}
+.cwp-operation-section>header>div{display:grid;gap:2px}
+.cwp-operation-section>header strong{font-size:10px;color:#2d4359}
+.cwp-operation-section>header small{font-size:8px;color:#7e8fa1}
+.cwp-operation-section>footer{
+  padding:7px 10px;
+  border-top:1px solid #e7edf3;
+  color:#8190a0;
+  font-size:8px;
+}
+.cwp-radio-list,.cwp-phone-list{display:grid;gap:5px;padding:9px}
+.cwp-radio-list button,.cwp-phone-list button{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:8px;
+  min-height:34px;
+  padding:7px 9px;
+  border:1px solid #dfe7ef;
+  border-radius:7px;
+  background:#fff;
+  text-align:left;
+}
+.cwp-radio-list button span,.cwp-phone-list button span{
+  display:flex;
+  align-items:center;
+  gap:7px;
+  font-size:9px;
+  font-weight:700;
+  color:#52677d;
+}
+.cwp-radio-list button span i,.cwp-phone-list button span i{
+  width:7px;
+  height:7px;
+  border-radius:50%;
+  background:#aab5c0;
+}
+.cwp-radio-list button small,.cwp-phone-list button small{font-size:8px;color:#8a98a8}
+.cwp-radio-list button.active{border-color:#95c3f4;background:#edf6ff}
+.cwp-radio-list button.active span{color:#126fc8}
+.cwp-radio-list button.active span i{background:#238ce3;box-shadow:0 0 0 3px #d8ecff}
+.cwp-phone-list button span i{background:#25a464}
+.cwp-phone-list button:hover{border-color:#a7ccef;background:#f1f8ff}
+
+.telephone-dialer-specimen{max-width:380px}
+.telephone-dialer-modal{width:min(360px,calc(100vw - 28px))}
+.telephone-dialer{
+  overflow:hidden;
+  border:1px solid #d9e4ee;
+  border-radius:12px;
+  background:#fff;
+  box-shadow:0 24px 70px rgba(29,48,67,.18);
+}
+.telephone-dialer>header{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  padding:12px 14px;
+  border-bottom:1px solid #e5ecf3;
+  background:#f7faff;
+}
+.telephone-dialer>header>div{display:grid;gap:1px}
+.telephone-dialer>header span{font-size:8px;text-transform:uppercase;color:#8494a5}
+.telephone-dialer>header strong{font-size:12px;color:#2e455d}
+.telephone-dialer>header button{border:0;background:transparent;color:#6f8092}
+.telephone-dialer-display{
+  display:grid;
+  gap:2px;
+  padding:16px;
+  text-align:center;
+  border-bottom:1px solid #edf1f5;
+}
+.telephone-dialer-display small{font-size:8px;color:#8393a4}
+.telephone-dialer-display strong{font-size:28px;letter-spacing:.08em;color:#253b52}
+.telephone-dialer-display span{font-size:8px;color:#72869a}
+.telephone-dialer-keys{
+  display:grid;
+  grid-template-columns:repeat(3,1fr);
+  gap:7px;
+  padding:12px 34px;
+}
+.telephone-dialer-keys button{
+  height:42px;
+  border:1px solid #d9e3ec;
+  border-radius:50%;
+  background:#fff;
+  color:#334b61;
+  font-size:15px;
+  font-weight:700;
+}
+.telephone-dialer-actions{
+  display:grid;
+  grid-template-columns:44px 1fr 44px;
+  gap:8px;
+  padding:0 18px 12px;
+}
+.telephone-dialer-actions button{
+  height:38px;
+  border:1px solid #dce5ed;
+  border-radius:8px;
+  background:#fff;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  gap:6px;
+}
+.telephone-dialer-actions .call{background:#e9f8ef;border-color:#a9dfbd;color:#168149;font-weight:700}
+.telephone-dialer-actions .hangup{color:#c94b4b}
+.telephone-dialer-directory{padding:10px 12px 12px;border-top:1px solid #edf1f5}
+.telephone-dialer-directory>span{display:block;margin-bottom:7px;font-size:8px;text-transform:uppercase;color:#8494a4}
+.telephone-dialer-directory>div{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:5px}
+.telephone-dialer-directory button{
+  display:grid;
+  gap:1px;
+  padding:7px;
+  border:1px solid #dfe7ee;
+  border-radius:7px;
+  background:#fafcff;
+  text-align:left;
+}
+.telephone-dialer-directory button strong{font-size:10px;color:#38526b}
+.telephone-dialer-directory button small{
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+  font-size:8px;
+  color:#8291a1;
+}
+@media(max-width:760px){.cwp-operation-grid{grid-template-columns:1fr}}

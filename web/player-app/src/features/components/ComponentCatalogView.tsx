@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Activity, ClipboardList, Database, Radio } from 'lucide-react'
 import { CwpFull, CwpListItem, CwpSummary, CwpThumb, CwpThumbEdit } from '@/representations/cwp'
 import { RadioFull, RadioSummary, RadioThumb, RadioThumbEdit } from '@/representations/radio'
-import { TelephoneFull, TelephoneSummary, TelephoneThumb, TelephoneThumbEdit } from '@/representations/telephone'
+import { TelephoneDialer, TelephoneFull, TelephoneSummary, TelephoneThumb, TelephoneThumbEdit } from '@/representations/telephone'
 import { RecorderFull, RecorderStatus, RecorderSummary, RecorderThumb, RecorderThumbEdit } from '@/representations/recorder'
 import { SipFull, SipStatus, SipSummary, SipThumb, SipThumbEdit } from '@/representations/sip'
 import { PlayerInline, PlayerMini, PlayerTrackRow, PlayerTrackSelection, PlayerTransport } from '@/representations/player'
@@ -13,9 +13,17 @@ import { BlockPrimitiveCatalogSection } from '@/features/components/BlockPrimiti
 import { ShadcnCatalogSection } from '@/features/components/ShadcnCatalogSection'
 import { FormPrimitiveCatalogSection } from '@/features/components/FormPrimitiveCatalogSection'
 import { TimelineCatalogSection } from '@/features/components/TimelineCatalogSection'
-import { SIM_CWPS, type SimStatus, type SimulatorMode } from '@/features/simulator/model'
+import { SIM_CWPS, type ServiceConfig, type SimStatus, type SimulatorMode } from '@/features/simulator/model'
 
 type CatalogTab = 'cwp' | 'radios' | 'telephones' | 'recorder' | 'sip' | 'player' | 'primitives' | 'fields' | 'timeline' | 'shadcn' | 'blocks' | 'elements'
+
+function uniqueServices(services: ServiceConfig[]) {
+  const map = new Map<string, ServiceConfig>()
+  services.forEach(service => {
+    if (!map.has(service.label)) map.set(service.label, service)
+  })
+  return Array.from(map.values())
+}
 
 const CATALOG_TABS: { id: CatalogTab; label: string }[] = [
   { id: 'cwp', label: 'CWP' },
@@ -42,6 +50,12 @@ export function ComponentCatalogView({ mode, status, events: _events }: {
   const [catalogTab, setCatalogTab] = useState<CatalogTab>('cwp')
 
   const sample = SIM_CWPS[0]
+  const registeredRadios = uniqueServices(
+    SIM_CWPS.flatMap(item => item[previewMode].services.filter(service => service.kind === 'RADIO')),
+  )
+  const registeredTelephones = uniqueServices(
+    SIM_CWPS.flatMap(item => item[previewMode].services.filter(service => service.kind === 'TEL')),
+  )
   const sampleRadio = sample[previewMode].services.find(service => service.kind === 'RADIO')!
   const sampleTel = sample[previewMode].services.find(service => service.kind === 'TEL')!
 
@@ -86,13 +100,15 @@ export function ComponentCatalogView({ mode, status, events: _events }: {
         <div className="rep-showcase-stack">
           <CwpSummary cwp={cwpSummary} mode={previewMode} />
           <div className="rep-thumb-row">
-            <CwpThumb cwp={cwpThumb} mode={previewMode} />
+            <CwpThumb cwp={cwpThumb} mode={previewMode}
+              registeredRadios={registeredRadios} registeredTelephones={registeredTelephones} />
             <CwpThumbEdit cwp={cwpThumbEdit} mode={previewMode} />
           </div>
           <CwpListItem cwp={cwpListItem} mode={previewMode} />
           <div className="catalog-isolated medium">
             <CwpFull cwp={cwpFull} mode={previewMode} expanded={expanded.includes(sample.id)}
-              onToggle={() => setExpanded(expanded.includes(sample.id) ? [] : [sample.id])} />
+              onToggle={() => setExpanded(expanded.includes(sample.id) ? [] : [sample.id])}
+              registeredRadios={registeredRadios} registeredTelephones={registeredTelephones} />
           </div>
         </div>
       </section>}
@@ -118,6 +134,10 @@ export function ComponentCatalogView({ mode, status, events: _events }: {
           </div>
           <TelephoneSummary telephone={telephoneSummary} />
           <div className="catalog-isolated medium"><TelephoneFull telephone={telephoneFull} /></div>
+          <div className="catalog-isolated telephone-dialer-specimen" id="telephone_dialer">
+            <TelephoneDialer source={sampleTel} telephones={registeredTelephones} />
+            <code>telephone_dialer</code>
+          </div>
         </div>
       </section>}
 
