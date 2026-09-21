@@ -1,0 +1,40 @@
+{
+  "schema": "audio-system.tone-scenario.v1",
+  "duration_ms": 10000,
+  "seed": 48291,
+  "tracks": [
+    {
+      "route_key": "/record/CWP-TONE-01/radio-121500",
+      "mode": "continuous",
+      "frequency_hz": 440,
+      "level_dbfs": -12
+    },
+    {
+      "route_key": "/record/CWP-TONE-02/radio-118700",
+      "mode": "pulsed",
+      "frequency_hz": 660,
+      "level_dbfs": -12,
+      "start_offset_ms": 300,
+      "on_ms": 700,
+      "off_ms": 500
+    },
+    {
+      "route_key": "/record/TEL-TONE-01/tel-050",
+      "mode": "random_pulsed",
+      "frequency_hz": 1000,
+      "level_dbfs": -12,
+      "random_start": {
+        "min_ms": 0,
+        "max_ms": 1500
+      },
+      "random_on": {
+        "min_ms": 300,
+        "max_ms": 1200
+      },
+      "random_off": {
+        "min_ms": 200,
+        "max_ms": 900
+      }
+    }
+  ]
+}
