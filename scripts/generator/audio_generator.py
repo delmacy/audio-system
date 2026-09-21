@@ -15,6 +15,19 @@ import wave
 from pathlib import Path
 
 PCMA_SAMPLE_RATE = 8000
+PCMA_BITS_PER_SAMPLE = 8
+PCMA_CHANNELS = 1
+PCMA_RTP_PAYLOAD_TYPE = 8
+PCMA_CODEC_PROFILE = {
+    "codec": "CCITT_ALAW",
+    "standard": "ITU-T G.711 A-law",
+    "rtp_encoding": "PCMA",
+    "sample_rate_hz": PCMA_SAMPLE_RATE,
+    "bits_per_sample": PCMA_BITS_PER_SAMPLE,
+    "channels": PCMA_CHANNELS,
+    "channel_layout": "mono",
+    "rtp_payload_type": PCMA_RTP_PAYLOAD_TYPE,
+}
 PCM16_MAX = 32767
 ALAW_SEG_END = (0x1F, 0x3F, 0x7F, 0xFF, 0x1FF, 0x3FF, 0x7FF, 0xFFF)
 
@@ -119,10 +132,15 @@ def generate_tone(
         "frequency_hz": frequency_hz,
         "duration_seconds": duration_seconds,
         "level_dbfs": level_dbfs,
+        "codec_profile": dict(PCMA_CODEC_PROFILE),
+        "codec": PCMA_CODEC_PROFILE["codec"],
+        "standard": PCMA_CODEC_PROFILE["standard"],
+        "rtp_encoding": PCMA_CODEC_PROFILE["rtp_encoding"],
         "sample_rate_hz": PCMA_SAMPLE_RATE,
-        "channels": 1,
-        "codec": "PCMA",
-        "rtp_payload_type": 8,
+        "bits_per_sample": PCMA_BITS_PER_SAMPLE,
+        "channels": PCMA_CHANNELS,
+        "channel_layout": "mono",
+        "rtp_payload_type": PCMA_RTP_PAYLOAD_TYPE,
         "sample_count": len(samples),
         "pcma_bytes": len(payload),
         "pcma_path": str(pcma_path.resolve()),
@@ -141,6 +159,16 @@ def selftest() -> None:
     encoded = pcma_bytes(samples)
     assert len(encoded) == 8000
     assert len(set(encoded)) > 4
+    assert PCMA_CODEC_PROFILE == {
+        "codec": "CCITT_ALAW",
+        "standard": "ITU-T G.711 A-law",
+        "rtp_encoding": "PCMA",
+        "sample_rate_hz": 8000,
+        "bits_per_sample": 8,
+        "channels": 1,
+        "channel_layout": "mono",
+        "rtp_payload_type": 8,
+    }
     print("AUDIO GENERATOR SELFTEST: PASS")
 
 
