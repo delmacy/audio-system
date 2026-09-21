@@ -3,6 +3,7 @@ import { TooltipProvider } from '@/components/ui/tooltip'
 import { AppSidebar } from '@/app/AppSidebar'
 import { ComponentCatalogView } from '@/features/components/ComponentCatalogView'
 import { ServiceRegistryView } from '@/features/services/ServiceRegistryView'
+import { RecorderStatusView } from '@/features/recorder/RecorderStatusView'
 import type { MainView } from '@/features/simulator/model'
 import './App.css'
 
@@ -29,7 +30,7 @@ function App() {
   else if (activeView === 'components') content = <ComponentCatalogView mode="simulation" status="stopped" events={CATALOG_EVENTS} />
   else if (activeView === 'simulator') content = <Placeholder title="Simulador" />
   else if (activeView === 'player') content = <Placeholder title="Player" />
-  else if (activeView === 'recorder') content = <Placeholder title="Gravador" />
+  else if (activeView === 'recorder') content = <RecorderStatusView />
   else content = <Placeholder title="Configurações" />
 
   return <TooltipProvider>

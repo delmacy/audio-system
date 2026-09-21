@@ -2190,3 +2190,113 @@ button:focus-visible,input:focus-visible,select:focus-visible,[role=slider]:focu
 .registry-locked-state>div{display:grid;gap:2px}
 .registry-locked-state strong{font-size:10px;color:#415a73}
 .registry-locked-state span{font-size:9px;color:#7b8da0}
+
+
+.recorder-page{
+  width:min(1180px,calc(100% - 48px));
+  margin:0 auto;
+  padding:34px 0 60px;
+}
+.recorder-page-header{
+  display:flex;
+  justify-content:space-between;
+  align-items:flex-start;
+  gap:20px;
+  margin-bottom:22px;
+}
+.recorder-page-header h1{margin:5px 0;font-size:25px;letter-spacing:-.03em;color:#213850}
+.recorder-page-header p{margin:0;color:#75879a;font-size:11px}
+.recorder-header-actions{display:flex;align-items:center;gap:8px}
+.recorder-header-actions>button{
+  min-height:32px;display:flex;align-items:center;gap:6px;border:1px solid #d6e2ed;border-radius:7px;background:#fff;color:#587089;padding:0 10px;font-size:9px;font-weight:750
+}
+.recorder-live-state{
+  min-height:32px;display:flex;align-items:center;gap:6px;border:1px solid #d7e3ed;border-radius:999px;background:#fff;padding:0 11px;color:#657a8e;font-size:9px;font-weight:800
+}
+.recorder-live-state i{width:7px;height:7px;border-radius:50%;background:#a3afba}
+.recorder-live-state.online i{background:#23a164}
+.recorder-live-state.recording{color:#b03b3b;border-color:#efc5c5;background:#fff7f7}
+.recorder-live-state.recording i{background:#d94b4b;box-shadow:0 0 0 4px rgba(217,75,75,.1)}
+.recorder-live-state.offline{color:#8b5f5f;background:#fffafa}
+.recorder-live-state.offline i{background:#c56b6b}
+
+.recorder-overview-grid{
+  display:grid;
+  grid-template-columns:repeat(4,minmax(0,1fr));
+  gap:10px;
+}
+.recorder-status-card{
+  display:grid;
+  gap:5px;
+  min-height:145px;
+  padding:16px;
+  border:1px solid #dbe5ef;
+  border-radius:12px;
+  background:#fff;
+}
+.recorder-status-card.primary{background:#f7fbff;border-color:#c8dff4}
+.recorder-card-icon{
+  width:36px;height:36px;display:grid;place-items:center;border-radius:9px;background:#edf5fd;color:#2473bb;margin-bottom:5px
+}
+.recorder-status-card>span{font-size:8px;text-transform:uppercase;letter-spacing:.05em;color:#8293a5}
+.recorder-status-card>strong{font-size:18px;line-height:1.15;color:#29435d;overflow:hidden;text-overflow:ellipsis}
+.recorder-status-card>small{font-size:8px;color:#8192a3}
+
+.recorder-panel{
+  margin-top:12px;
+  overflow:hidden;
+  border:1px solid #dbe5ef;
+  border-radius:12px;
+  background:#fff;
+}
+.recorder-panel>header{
+  min-height:58px;display:flex;align-items:center;padding:10px 14px;border-bottom:1px solid #e6edf3;background:#fbfdff;color:#3575af
+}
+.recorder-panel>header>div{display:flex;align-items:center;gap:9px}
+.recorder-panel>header>div>div{display:grid;gap:1px}
+.recorder-panel>header strong{font-size:11px;color:#2c455e}
+.recorder-panel>header small{font-size:8px;color:#8393a3}
+
+.recorder-file-details{
+  display:grid;
+  grid-template-columns:minmax(0,1.5fr) minmax(380px,1fr);
+  gap:18px;
+  padding:16px;
+}
+.recorder-file-main{min-width:0;display:grid;align-content:start;gap:4px}
+.recorder-file-main>span{font-size:8px;text-transform:uppercase;color:#8998a7}
+.recorder-file-main>strong{font-size:17px;color:#29435c;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.recorder-file-main>small{font:8px ui-monospace,SFMono-Regular,Consolas,monospace;color:#7b8ea0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.recorder-file-details dl{margin:0;display:grid;grid-template-columns:1fr 1fr;border:1px solid #e3eaf1;border-radius:9px;overflow:hidden}
+.recorder-file-details dl>div{display:grid;gap:3px;padding:10px;border-right:1px solid #e8eef4;border-bottom:1px solid #e8eef4}
+.recorder-file-details dt{font-size:7px;text-transform:uppercase;color:#8c9aa8}
+.recorder-file-details dd{margin:0;font-size:9px;color:#415a72;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+.recorder-connectivity-grid,.recorder-future-grid{
+  display:grid;
+  grid-template-columns:repeat(4,minmax(0,1fr));
+}
+.recorder-connectivity-grid>div{
+  display:grid;gap:4px;padding:14px 16px;border-right:1px solid #e8eef4
+}
+.recorder-connectivity-grid span{font-size:8px;text-transform:uppercase;color:#8998a7}
+.recorder-connectivity-grid strong{font-size:10px;color:#3c566f;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+.recorder-panel.future{opacity:.78}
+.recorder-future-grid>div{
+  display:grid;grid-template-columns:24px 1fr;grid-template-rows:auto auto;align-items:center;gap:1px 6px;padding:14px 16px;border-right:1px solid #e8eef4;color:#7890a5
+}
+.recorder-future-grid svg{grid-row:1/3}
+.recorder-future-grid span{font-size:8px;text-transform:uppercase}
+.recorder-future-grid strong{font-size:10px;color:#60788f}
+
+@media(max-width:950px){
+  .recorder-overview-grid{grid-template-columns:1fr 1fr}
+  .recorder-file-details{grid-template-columns:1fr}
+  .recorder-connectivity-grid,.recorder-future-grid{grid-template-columns:1fr 1fr}
+}
+@media(max-width:620px){
+  .recorder-page{width:calc(100% - 28px)}
+  .recorder-page-header{flex-direction:column}
+  .recorder-overview-grid,.recorder-connectivity-grid,.recorder-future-grid{grid-template-columns:1fr}
+}
