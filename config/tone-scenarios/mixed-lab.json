@@ -36,5 +36,15 @@
         "max_ms": 900
       }
     }
-  ]
+  ],
+  "audio_format": {
+    "codec": "CCITT_ALAW",
+    "standard": "ITU-T G.711 A-law",
+    "rtp_encoding": "PCMA",
+    "sample_rate_hz": 8000,
+    "bits_per_sample": 8,
+    "channels": 1,
+    "channel_layout": "mono",
+    "rtp_payload_type": 8
+  }
 }
