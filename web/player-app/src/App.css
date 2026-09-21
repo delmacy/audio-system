@@ -2211,14 +2211,39 @@ button:focus-visible,input:focus-visible,select:focus-visible,[role=slider]:focu
   min-height:32px;display:flex;align-items:center;gap:6px;border:1px solid #d6e2ed;border-radius:7px;background:#fff;color:#587089;padding:0 10px;font-size:10px;font-weight:750
 }
 .recorder-live-state{
-  min-height:32px;display:flex;align-items:center;gap:6px;border:1px solid #d7e3ed;border-radius:999px;background:#fff;padding:0 11px;color:#657a8e;font-size:10px;font-weight:800
+  min-height:32px;display:flex;align-items:center;gap:7px;border:1px solid #d7e3ed;border-radius:999px;background:#fff;padding:0 11px;color:#657a8e;font-size:10px;font-weight:800
 }
 .recorder-live-state i{width:7px;height:7px;border-radius:50%;background:#a3afba}
-.recorder-live-state.online i{background:#23a164}
-.recorder-live-state.recording{color:#b03b3b;border-color:#efc5c5;background:#fff7f7}
-.recorder-live-state.recording i{background:#d94b4b;box-shadow:0 0 0 4px rgba(217,75,75,.1)}
-.recorder-live-state.offline{color:#8b5f5f;background:#fffafa}
-.recorder-live-state.offline i{background:#c56b6b}
+.recorder-live-state.online i{background:#6f8aa2}
+.recorder-live-state.recording{color:#187a49;border-color:#b9e4cc;background:#f4fcf7}
+.recorder-recording-pulse{
+  position:relative;
+  width:8px;
+  height:8px;
+  flex:none;
+  border-radius:50%;
+  background:#20a35d;
+  box-shadow:0 0 0 0 rgba(32,163,93,.34);
+  animation:recorder-recording-pulse 1.45s ease-out infinite;
+}
+@keyframes recorder-recording-pulse{
+  0%{box-shadow:0 0 0 0 rgba(32,163,93,.36)}
+  70%{box-shadow:0 0 0 6px rgba(32,163,93,0)}
+  100%{box-shadow:0 0 0 0 rgba(32,163,93,0)}
+}
+.recorder-live-state.offline{
+  color:#b83d3d;
+  border-color:#efc2c2;
+  background:#fff6f6;
+}
+.recorder-stopped-icon{
+  flex:none;
+  color:#d34848;
+  stroke-width:2.5;
+}
+@media (prefers-reduced-motion:reduce){
+  .recorder-recording-pulse{animation:none;box-shadow:0 0 0 3px rgba(32,163,93,.12)}
+}
 
 .recorder-overview-grid{
   display:grid;

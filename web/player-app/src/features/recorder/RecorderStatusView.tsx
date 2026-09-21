@@ -109,7 +109,7 @@ function formatBytes(value: number | null) {
 function statusLabel(status: RecorderStatusPayload['runtime_status']) {
   if (status === 'recording') return 'Gravando'
   if (status === 'online') return 'Online'
-  if (status === 'offline') return 'Offline'
+  if (status === 'offline') return 'Parado'
   return 'Não configurado'
 }
 
@@ -220,7 +220,14 @@ export function RecorderStatusView() {
         <p>Três MXF simultâneos: CWP, rádio e telefone, organizados por ano/mês/dia/categoria.</p>
       </div>
       <div className="recorder-header-actions">
-        <span className={'recorder-live-state ' + runtimeStatus}><i />{statusLabel(runtimeStatus)}</span>
+        <span className={'recorder-live-state ' + runtimeStatus}>
+          {runtimeStatus === 'recording'
+            ? <span className="recorder-recording-pulse" aria-hidden="true" />
+            : runtimeStatus === 'offline'
+              ? <Square className="recorder-stopped-icon" size={10} fill="currentColor" aria-hidden="true" />
+              : <i aria-hidden="true" />}
+          {statusLabel(runtimeStatus)}
+        </span>
         <button type="button" onClick={() => void controlService('recorder', 'start')} disabled={Boolean(system?.services.recorder.running) || Boolean(serviceAction)}><Play size={14} />Iniciar</button>
         <button type="button" onClick={() => void controlService('recorder', 'stop')} disabled={!system?.services.recorder.running || Boolean(serviceAction)}><Square size={13} />Parar</button>
         <button type="button" onClick={() => void controlService('recorder', 'restart')} disabled={Boolean(serviceAction)}><RotateCcw size={13} />Reiniciar</button>
