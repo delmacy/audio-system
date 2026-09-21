@@ -8,7 +8,7 @@ from urllib.parse import parse_qs, urlparse
 
 from playback_data import build_operational_plan, render_operational_wav
 from timeline_data import build_timeline
-from config_store import configuration_snapshot, create_cwp, create_service, delete_cwp, delete_service, list_cwps, list_services, next_cwp_ip
+from config_store import configuration_snapshot, create_cwp, create_service, delete_cwp, delete_service, list_cwps, list_services, next_cwp_ip, update_cwp, update_service
 
 HOST = "127.0.0.1"
 PORT = 8500
@@ -161,6 +161,45 @@ class Handler(BaseHTTPRequestHandler):
             self._json(400, {"error": "invalid_json", "detail": str(exc)})
         except Exception as exc:
             self._json(500, {"error": "configuration_write_failed", "detail": str(exc)})
+
+
+    def do_PUT(self) -> None:  # noqa: N802
+        parsed = urlparse(self.path)
+        try:
+            payload = self._read_json_body()
+            if parsed.path.startswith("/api/cwps/"):
+                record_id = parsed.path.removeprefix("/api/cwps/")
+                if not record_id:
+                    raise ValueError("CWP id is required")
+                item = update_cwp(
+                    record_id=record_id,
+                    label=str(payload.get("label", "")),
+                    side=str(payload.get("side", "A")),
+                    ip=str(payload.get("ip", "")),
+                )
+                self._json(200, {"cwp": item})
+                return
+            if parsed.path.startswith("/api/services/"):
+                record_id = parsed.path.removeprefix("/api/services/")
+                if not record_id:
+                    raise ValueError("Service id is required")
+                item = update_service(
+                    record_id=record_id,
+                    kind=str(payload.get("kind", "")),
+                    label=str(payload.get("label", "")),
+                    endpoint=str(payload.get("endpoint", "")),
+                )
+                self._json(200, {"service": item})
+                return
+            self._json(404, {"error": "not_found"})
+        except ValueError as exc:
+            self._json(400, {"error": "invalid_request", "detail": str(exc)})
+        except LookupError as exc:
+            self._json(404, {"error": "not_found", "detail": str(exc)})
+        except json.JSONDecodeError as exc:
+            self._json(400, {"error": "invalid_json", "detail": str(exc)})
+        except Exception as exc:
+            self._json(500, {"error": "configuration_update_failed", "detail": str(exc)})
 
     def do_DELETE(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)

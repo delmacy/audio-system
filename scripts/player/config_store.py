@@ -199,6 +199,38 @@ def get_cwp(record_id: str) -> dict:
     return dict(row) | {"enabled": bool(row["enabled"])}
 
 
+def update_cwp(record_id: str, label: str, side: str, ip: str) -> dict:
+    initialize()
+    label = label.strip()
+    side = side.strip().upper()
+    if not label:
+        raise ValueError("CWP label is required")
+    if side not in {"A", "B"}:
+        raise ValueError("CWP side must be A or B")
+    assigned_ip = _validate_ip(ip)
+    now = utc_now()
+    try:
+        with connect() as con:
+            cursor = con.execute(
+                """
+                UPDATE cwp
+                SET label=?, ip=?, side=?, ip_source='manual', updated_at=?
+                WHERE id=?
+                """,
+                (label, assigned_ip, side, now, record_id),
+            )
+            if cursor.rowcount == 0:
+                raise LookupError("CWP not found")
+    except sqlite3.IntegrityError as exc:
+        text = str(exc).lower()
+        if "cwp.label" in text:
+            raise ValueError(f"CWP label already exists: {label}") from exc
+        if "cwp.ip" in text:
+            raise ValueError(f"CWP IP already exists: {assigned_ip}") from exc
+        raise
+    return get_cwp(record_id)
+
+
 def delete_cwp(record_id: str) -> None:
     initialize()
     with connect() as con:
@@ -250,6 +282,35 @@ def get_service(record_id: str) -> dict:
     if not row:
         raise LookupError("Service not found")
     return dict(row) | {"enabled": bool(row["enabled"])}
+
+
+def update_service(record_id: str, kind: str, label: str, endpoint: str) -> dict:
+    initialize()
+    kind = kind.strip().upper()
+    label = label.strip()
+    endpoint = endpoint.strip()
+    if kind not in {"RADIO", "TEL"}:
+        raise ValueError("Service kind must be RADIO or TEL")
+    if not label:
+        raise ValueError("Service label is required")
+    if not endpoint:
+        raise ValueError("Service endpoint is required")
+    now = utc_now()
+    try:
+        with connect() as con:
+            cursor = con.execute(
+                """
+                UPDATE service
+                SET kind=?, label=?, endpoint=?, updated_at=?
+                WHERE id=?
+                """,
+                (kind, label, endpoint, now, record_id),
+            )
+            if cursor.rowcount == 0:
+                raise LookupError("Service not found")
+    except sqlite3.IntegrityError as exc:
+        raise ValueError("Service label or endpoint already exists") from exc
+    return get_service(record_id)
 
 
 def delete_service(record_id: str) -> None:
