@@ -96,9 +96,19 @@ def _mxf_from_state(state: dict | None) -> Path | None:
         return None
 
 
-def _category_file_status(layout: dict) -> dict:
+def _category_file_status(layout: dict, state: dict | None = None) -> dict:
     result = {}
+    selected_files = state.get("files", {}) if state and isinstance(state.get("files"), dict) else {}
     for kind, item in layout["paths"].items():
+        selected = selected_files.get(kind)
+        if isinstance(selected, dict) and selected.get("path"):
+            item = {
+                **item,
+                "file": str(selected["path"]),
+                "file_name": Path(str(selected["path"])).name,
+                "partial": str(selected.get("partial") or (str(selected["path"]) + ".partial")),
+                "lock": str(selected.get("lock") or (str(selected["path"]) + ".lock")),
+            }
         path = Path(str(item["file"]))
         directory = Path(str(item["directory"]))
         latest = None
@@ -128,7 +138,7 @@ def build_recorder_status() -> dict:
     track_count = int(state.get("track_count", len(tracks) if isinstance(tracks, list) else 0)) if state else 0
     recorder_state = str(state.get("status", "UNKNOWN")) if state else "NO_RUN"
 
-    active_markers = {"RECORDING", "ACTIVE", "OPEN", "RUNNING", "READY"}
+    active_markers = {"RECORDING", "ACTIVE", "OPEN", "RUNNING", "READY", "READY_IDLE"}
     recording = recorder_state.upper() in active_markers
     if mxf and mxf.with_suffix(mxf.suffix + ".partial").exists():
         recording = True
@@ -138,7 +148,7 @@ def build_recorder_status() -> dict:
         runtime_status = "unconfigured"
 
     layout = recording_layout_snapshot()
-    category_files = _category_file_status(layout)
+    category_files = _category_file_status(layout, state)
     services = list_services()
     telephone_count = sum(1 for service in services if service.get("kind") == "TEL")
     ringing_slots = int(layout["settings"]["telephone"]["ringing_slots_per_phone"])

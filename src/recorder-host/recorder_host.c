@@ -1,7 +1,7 @@
 #define _CRT_SECURE_NO_WARNINGS
 #define WIN32_LEAN_AND_MEAN
 #ifndef FD_SETSIZE
-#define FD_SETSIZE 256
+#define FD_SETSIZE 512
 #endif
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -1676,11 +1676,18 @@ static int run_server(RecorderHost *host) {
         if (all_sessions_finalized(host)) host->shutdown_requested = 1;
         if (!timeout_finalization_started && (int)((GetTickCount64() - started) / 1000) >= host->cfg.max_seconds) {
             timeout_finalization_started = 1;
-            audit_event(host, NULL, "CONNECTION_SUSPECT", "Recorder host max-seconds timeout reached; remaining routes queued for finalization");
+            audit_event(host, NULL,
+                host->cfg.shared_mxf_by_output ? "WINDOW_ROTATION_REQUESTED" : "CONNECTION_SUSPECT",
+                host->cfg.shared_mxf_by_output
+                    ? "Scheduled shared-MXF window boundary reached; remaining routes queued for normal finalization"
+                    : "Recorder host max-seconds timeout reached; remaining routes queued for finalization");
             for (i = 0; i < host->session_count; i++) {
                 if (!host->sessions[i].finalized && host->sessions[i].finalize_state == 0) {
-                    begin_finalize_session(&host->sessions[i], "Host timeout finalized remaining session");
-                    host->server_failed = 1;
+                    begin_finalize_session(&host->sessions[i],
+                        host->cfg.shared_mxf_by_output
+                            ? "Scheduled recording window rotation"
+                            : "Host timeout finalized remaining session");
+                    if (!host->cfg.shared_mxf_by_output) host->server_failed = 1;
                 }
             }
         }
