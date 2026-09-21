@@ -106,6 +106,35 @@ class ToneScenarioTests(unittest.TestCase):
         )
         self.assertTrue(all(item["off_ms"] == 0 for item in track["bursts"]))
 
+    def test_audio_format_is_fixed_to_ccitt_alaw_8k_mono(self) -> None:
+        resolved = resolve_scenario({
+            "schema": "audio-system.tone-scenario.v1",
+            "duration_ms": 1000,
+            "audio_format": {
+                "codec": "CCITT_ALAW",
+                "sample_rate_hz": 8000,
+                "bits_per_sample": 8,
+                "channels": 1,
+            },
+            "tracks": [{"id": "a", "mode": "continuous", "frequency_hz": 1000}],
+        })
+        self.assertEqual(resolved["audio_format"]["codec"], "CCITT_ALAW")
+        self.assertEqual(resolved["audio_format"]["standard"], "ITU-T G.711 A-law")
+        self.assertEqual(resolved["audio_format"]["sample_rate_hz"], 8000)
+        self.assertEqual(resolved["audio_format"]["bits_per_sample"], 8)
+        self.assertEqual(resolved["audio_format"]["channels"], 1)
+        self.assertEqual(resolved["audio_format"]["channel_layout"], "mono")
+        self.assertEqual(resolved["tracks"][0]["audio_format"], resolved["audio_format"])
+
+    def test_rejects_incompatible_audio_format(self) -> None:
+        with self.assertRaises(ValueError):
+            resolve_scenario({
+                "schema": "audio-system.tone-scenario.v1",
+                "duration_ms": 1000,
+                "audio_format": {"codec": "PCM_S16LE"},
+                "tracks": [{"id": "a", "mode": "continuous", "frequency_hz": 1000}],
+            })
+
     def test_one_frequency_can_target_multiple_tracks(self) -> None:
         resolved = resolve_scenario({
             "schema": "audio-system.tone-scenario.v1",
