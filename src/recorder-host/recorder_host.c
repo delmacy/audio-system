@@ -1580,12 +1580,14 @@ static int push_shared_structural_samples(
             sample_count > SHARED_MXF_AUDIO_SAMPLES_PER_EDIT_UNIT
                 ? SHARED_MXF_AUDIO_SAMPLES_PER_EDIT_UNIT
                 : sample_count;
-        GstBuffer *gap = gst_buffer_new();
+        GstBuffer *gap;
         GstFlowReturn flow = GST_FLOW_ERROR;
         guint64 duration_ns;
 
-        if (!session || !session->appsrc || !session->shared_group || !gap)
+        if (!session || !session->appsrc || !session->shared_group)
             return 0;
+        gap = gst_buffer_new();
+        if (!gap) return 0;
 
         duration_ns = gst_util_uint64_scale(
             (guint64)chunk, GST_SECOND, 8000);
@@ -2182,7 +2184,7 @@ static void print_summaries(RecorderHost *host) {
             s->record_commands, s->pause_commands, s->keepalive_requests, s->media_intervals_started, s->media_intervals_closed,
             s->rtp_packets_ignored_not_recording, s->teardown_received, s->window_open_count, s->windows_closed_complete, s->rotations_completed, s->cfg.segment_sequence);
         if (host->session_count == 1) {
-            g_print("RECORDER SUMMARY packets_received=%llu packets_recorded=%llu payload_bytes=%llu sequence_gap_packets=%llu duplicates=%llu out_of_order=%llu malformed=%llu wrong_pt=%llu timestamp_discontinuities=%llu timestamp_gap_samples=%llu mux_bytes=%llu final=%s record_commands=%u pause_commands=%u keepalives=%u media_intervals_started=%u media_intervals_closed=%u packets_ignored_not_recording=%llu teardown=%d window_open_count=%d windows_closed_complete=%d rotations_completed=%d segment_sequence=%u\n",
+            g_print("RECORDER SUMMARY packets_received=%llu packets_recorded=%llu payload_bytes=%llu shared_samples_queued=%llu sequence_gap_packets=%llu duplicates=%llu out_of_order=%llu malformed=%llu wrong_pt=%llu timestamp_discontinuities=%llu timestamp_gap_samples=%llu mux_bytes=%llu final=%s record_commands=%u pause_commands=%u keepalives=%u media_intervals_started=%u media_intervals_closed=%u packets_ignored_not_recording=%llu teardown=%d window_open_count=%d windows_closed_complete=%d rotations_completed=%d segment_sequence=%u\n",
                 s->rtp_packets_received, s->rtp_packets_recorded, s->rtp_payload_bytes_recorded, s->shared_samples_queued, s->rtp_sequence_gap_packets,
                 s->rtp_packets_duplicate, s->rtp_packets_out_of_order, s->rtp_packets_malformed, s->rtp_packets_wrong_payload_type,
                 s->rtp_timestamp_discontinuities, s->rtp_timestamp_gap_samples, s->mux_bytes_written,
