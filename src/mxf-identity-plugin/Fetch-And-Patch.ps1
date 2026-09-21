@@ -364,6 +364,27 @@ $new = @'
     gst_adapter_push (adapter, buffer);
 '@
 $alaw = Replace-Exact $alaw $old $new 'sparse-alaw-structural-filler'
+
+$old = @'
+  if (!mxf_metadata_generic_sound_essence_descriptor_from_caps (ret, caps)) {
+    g_object_unref (ret);
+    return NULL;
+  }
+
+  *handler = mxf_alaw_write_func;
+'@
+$new = @'
+  if (!mxf_metadata_generic_sound_essence_descriptor_from_caps (ret, caps)) {
+    g_object_unref (ret);
+    return NULL;
+  }
+
+  /* CCITT/ITU-T G.711 A-law uses one 8-bit codeword per sample. */
+  ret->quantization_bits = 8;
+
+  *handler = mxf_alaw_write_func;
+'@
+$alaw = Replace-Exact $alaw $old $new 'alaw-quantization-bits'
 Set-Content -Encoding UTF8 -LiteralPath $alawPath -Value $alaw
 
 # 7) Isolate plugin registration: only patched muxer is exposed; stock mxfdemux remains official.
@@ -393,6 +414,7 @@ $marker = Join-Path $BuildSrc 'PATCHED-2.0.14.txt'
 Upstream: GStreamer $Tag / subprojects/gst-plugins-bad/gst/mxf
 Factory: mxfidmux
 Patch: per-request-pad identity + downstream complete-KLV source timing metadata
+Audio profile: CCITT/ITU-T G.711 A-law, 8000 Hz, 8-bit, mono; quantization_bits=8 is serialized in the MXF sound descriptor.
 Sparse audio: GAP time is serialized as valid PCMA 0xD5 structural filler; recorder audit remains the media/evidence authority.
 Serialization: MXF Track Name only; structural IDs are not overloaded.
 Growing playback: GstBuffer timing metadata is downstream-only and does not alter MXF bytes.
