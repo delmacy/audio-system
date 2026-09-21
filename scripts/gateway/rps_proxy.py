@@ -183,6 +183,11 @@ class ActiveSession:
     direction: str
     cwp_id: str | None
     slot_index: int | None
+    sip_from_raw: str
+    sip_to_raw: str
+    sip_from_user: str
+    sip_to_user: str
+    remote_party_user: str
     rtsp: RtspClient
     rtp_socket: socket.socket
     relay_stop: threading.Event
@@ -268,30 +273,45 @@ class RpsProxy:
             return cwps[0]
         return None
 
-    def calling_slot(self, number: str, tracks: list[dict]) -> dict | None:
+    def telephone_slot(self, number: str, direction: str, tracks: list[dict]) -> dict | None:
         candidates = [
             track for track in tracks
             if track.get("category") == "telephone"
             and str(track.get("service_id")) == number
-            and track.get("role") == "calling"
+            and track.get("role") == direction
         ]
         with self.lock:
             used = {
                 session.slot_index
                 for session in self.sessions.values()
-                if session.service_id == number and session.direction == "calling"
+                if session.service_id == number and session.direction == direction
             }
         for track in sorted(candidates, key=lambda item: int(item.get("slot_index") or 0)):
             if int(track.get("slot_index") or 0) not in used:
                 return track
         return None
 
-    def resolve_track(self, message: SipMessage, peer_ip: str) -> tuple[dict, dict | None, str]:
+    def telephone_service_and_direction(self, message: SipMessage) -> tuple[dict, str, str, str]:
+        request_user = sip_user(message.request_uri)
+        to_user = sip_user(message.header("to")) or request_user
+        from_user = sip_user(message.header("from"))
+
+        to_service = self.service_by_user(to_user) if to_user else None
+        from_service = self.service_by_user(from_user) if from_user else None
+        if to_service and to_service.get("kind") == "TEL":
+            return to_service, "received", from_user, to_user
+        if from_service and from_service.get("kind") == "TEL":
+            return from_service, "calling", from_user, to_user
+
+        raise LookupError(
+            f"No enabled telephone service matches SIP From='{from_user}' or To='{to_user}'"
+        )
+
+    def resolve_track(self, message: SipMessage, peer_ip: str) -> tuple[dict, dict | None, str, dict]:
         topology, _ = self.current_topology()
         tracks = list(topology.get("tracks") or [])
         category = message.header("x-audio-category").strip().lower()
-        direction = message.header("x-audio-direction", "received").strip().lower()
-        user = sip_user(message.request_uri)
+        request_user = sip_user(message.request_uri)
 
         if category == "cwp":
             cwp = self.resolve_cwp(message, peer_ip)
@@ -301,37 +321,45 @@ class RpsProxy:
             track = next((item for item in tracks if item.get("route_key") == route), None)
             if not track:
                 raise LookupError(f"CWP track is not present in current recorder topology: {route}")
-            return track, cwp, "cwp"
+            return track, cwp, "cwp", {
+                "from_user": sip_user(message.header("from")),
+                "to_user": sip_user(message.header("to")) or request_user,
+                "remote_party_user": "",
+            }
 
-        service = self.service_by_user(user)
-        if not service:
-            raise LookupError(f"No enabled SIP service matches user '{user}'")
-
-        number = service_number(str(service["label"]))
-        if service["kind"] == "RADIO":
+        service = self.service_by_user(request_user)
+        if service and service["kind"] == "RADIO":
+            number = service_number(str(service["label"]))
             route = f"/record/radio/{number}"
             track = next((item for item in tracks if item.get("route_key") == route), None)
             if not track:
                 raise LookupError(f"Radio track is not present in current recorder topology: {route}")
-            return track, None, "radio"
+            return track, None, "radio", {
+                "from_user": sip_user(message.header("from")),
+                "to_user": sip_user(message.header("to")) or request_user,
+                "remote_party_user": "",
+            }
 
+        service, inferred_direction, from_user, to_user = self.telephone_service_and_direction(message)
+        explicit_direction = message.header("x-audio-direction").strip().lower()
+        direction = explicit_direction or inferred_direction
         if direction not in {"received", "calling"}:
-            raise ValueError("Telephone X-Audio-Direction must be received or calling")
+            raise ValueError("Telephone direction must be received or calling")
 
-        if direction == "received":
-            cwp = self.resolve_cwp(message, peer_ip)
-            if not cwp:
-                raise ValueError("Received telephone route requires X-Audio-CWP when the CWP cannot be inferred")
-            route = f"/record/telephone/{number}/received/{cwp['label']}"
-            track = next((item for item in tracks if item.get("route_key") == route), None)
-            if not track:
-                raise LookupError(f"Telephone received track is not present: {route}")
-            return track, cwp, direction
-
-        track = self.calling_slot(number, tracks)
+        number = service_number(str(service["label"]))
+        track = self.telephone_slot(number, direction, tracks)
         if not track:
-            raise RuntimeError(f"No free calling slot is available for telephone {number}")
-        return track, self.resolve_cwp(message, peer_ip), direction
+            raise RuntimeError(f"No free {direction} slot is available for telephone {number}")
+
+        recorded_user = sip_user(str(service.get("sip_uri") or "")) or number
+        remote_party = from_user if direction == "received" else to_user
+        metadata = {
+            "from_user": from_user,
+            "to_user": to_user,
+            "recorded_user": recorded_user,
+            "remote_party_user": remote_party,
+        }
+        return track, self.resolve_cwp(message, peer_ip), direction, metadata
 
     def sip_response(
         self,
@@ -400,7 +428,7 @@ class RpsProxy:
             if call_id in self.sessions:
                 return self.sessions[call_id]
 
-        track, cwp, direction = self.resolve_track(request, peer[0])
+        track, cwp, direction, sip_meta = self.resolve_track(request, peer[0])
         route = str(track["route_key"])
         recorder_rtp_port = int(track["rtp_port"])
         number = str(track["service_id"])
@@ -454,6 +482,11 @@ class RpsProxy:
             direction=direction,
             cwp_id=str(cwp["id"]) if cwp else None,
             slot_index=int(track["slot_index"]) if track.get("slot_index") is not None else None,
+            sip_from_raw=request.header("from"),
+            sip_to_raw=request.header("to"),
+            sip_from_user=str(sip_meta.get("from_user") or ""),
+            sip_to_user=str(sip_meta.get("to_user") or ""),
+            remote_party_user=str(sip_meta.get("remote_party_user") or ""),
             rtsp=rtsp,
             rtp_socket=udp,
             relay_stop=stop,
@@ -472,6 +505,11 @@ class RpsProxy:
             direction=direction,
             cwp_id=session.cwp_id,
             slot_index=session.slot_index,
+            sip_from_raw=session.sip_from_raw,
+            sip_to_raw=session.sip_to_raw,
+            sip_from_user=session.sip_from_user,
+            sip_to_user=session.sip_to_user,
+            remote_party_user=session.remote_party_user,
         )
         return session
 
@@ -542,6 +580,9 @@ class RpsProxy:
                     "track_index": item.track_index,
                     "slot_index": item.slot_index,
                     "cwp_id": item.cwp_id,
+                    "sip_from_user": item.sip_from_user,
+                    "sip_to_user": item.sip_to_user,
+                    "remote_party_user": item.remote_party_user,
                     "local_rtp_port": item.local_rtp_port,
                     "recorder_rtp_port": item.recorder_rtp_port,
                     "packets": item.packets,
