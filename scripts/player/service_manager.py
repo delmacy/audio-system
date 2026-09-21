@@ -199,6 +199,55 @@ def _windows_process_pids_matching(patterns: tuple[str, ...]) -> set[int]:
     return result
 
 
+def _recorder_supervisor_pids() -> set[int]:
+    """Find recorder supervisors belonging to this checkout."""
+    if os.name != "nt":
+        return set()
+
+    candidates = _windows_process_pids_matching(("Start-LiveRecorderStack.ps1",))
+    result: set[int] = set()
+    root_text = str(ROOT).lower()
+    current_pid = os.getpid()
+
+    for pid in candidates:
+        if pid <= 0 or pid == current_pid:
+            continue
+        command = (
+            f"$p=Get-CimInstance Win32_Process -Filter \"ProcessId={pid}\" "
+            "-ErrorAction SilentlyContinue; if($p){$p.CommandLine}"
+        )
+        completed = subprocess.run(
+            ["powershell.exe", "-NoProfile", "-Command", command],
+            capture_output=True,
+            text=True,
+            check=False,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        command_line = completed.stdout.strip().lower()
+        if root_text in command_line or "start-liverecorderstack.ps1" in command_line:
+            result.add(pid)
+    return result
+
+
+def _recorder_runtime_pids() -> set[int]:
+    result: set[int] = set()
+    recorder_pid = _current_recorder_pid()
+    if recorder_pid:
+        result.add(recorder_pid)
+    result.update(_windows_process_pids_by_name("recorder-host"))
+    result.update(_recorder_supervisor_pids())
+    for _host, port, protocol in _service_endpoints("recorder"):
+        result.update(_windows_port_owner_pids(port, protocol))
+    result.discard(os.getpid())
+    return {pid for pid in result if pid > 0}
+
+
+def _recorder_fully_stopped() -> bool:
+    if any(_pid_alive(pid) for pid in _recorder_runtime_pids()):
+        return False
+    return _wait_endpoints_free("recorder", timeout_seconds=0.05)
+
+
 def _cleanup_legacy_dev_supervisors() -> list[int]:
     """Stop the old auto-restarting dev supervisor before clean startup."""
     if os.name != "nt":
@@ -500,48 +549,42 @@ def stop_service(name: str) -> dict:
         operational_dir = ROOT / "runs" / "operational-recorder"
         operational_dir.mkdir(parents=True, exist_ok=True)
 
-        # Prevent the PowerShell supervisor from opening another window after
-        # the current recorder-host exits.
-        stop_signal = operational_dir / "stop.signal"
-        stop_signal.write_text(_utc_now() + "\n", encoding="utf-8")
+        # First request a graceful stop. The supervisor must not open a new
+        # recording window while recorder-host is finalizing its MXF files.
+        (operational_dir / "stop.signal").write_text(_utc_now() + "\n", encoding="utf-8")
+        (operational_dir / "shutdown.signal").write_text(_utc_now() + "\n", encoding="utf-8")
 
-        # Ask recorder-host itself to finish MEDIA_END/EOS and close the shared
-        # MXF writers. This is intentionally independent from RPS state.
-        shutdown_signal = operational_dir / "shutdown.signal"
-        shutdown_signal.write_text(_utc_now() + "\n", encoding="utf-8")
-
-        recorder_pid = int(_current_recorder_pid() or 0)
-        deadline = time.monotonic() + 10.0
-        while time.monotonic() < deadline:
-            host_alive = bool(recorder_pid and _pid_alive(recorder_pid))
-            endpoint_busy = not _wait_endpoints_free("recorder", timeout_seconds=0.05)
-            if not host_alive and not endpoint_busy:
+        graceful_deadline = time.monotonic() + 8.0
+        while time.monotonic() < graceful_deadline:
+            if _recorder_fully_stopped():
                 break
             time.sleep(0.15)
 
-        # Fallback only: if graceful shutdown was not enough, terminate the
-        # actual recorder-host and any process still owning the recorder RTSP port.
-        fallback_pids: set[int] = set()
-        if recorder_pid and _pid_alive(recorder_pid):
-            fallback_pids.add(recorder_pid)
-        fallback_pids.update(_windows_process_pids_by_name("recorder-host"))
-        for _host, port, protocol in _service_endpoints("recorder"):
-            fallback_pids.update(_windows_port_owner_pids(port, protocol))
+        # Hard fallback. More than one old supervisor may exist after prior
+        # development launches, so terminate every recorder runtime belonging
+        # to this checkout, not just the PID stored in services.json.
+        if not _recorder_fully_stopped():
+            hard_deadline = time.monotonic() + 8.0
+            while time.monotonic() < hard_deadline:
+                remaining = _recorder_runtime_pids()
+                if not remaining and _wait_endpoints_free("recorder", timeout_seconds=0.05):
+                    break
+                for target_pid in sorted(remaining):
+                    if _pid_alive(target_pid):
+                        _kill_tree(target_pid)
+                time.sleep(0.2)
 
-        for fallback_pid in sorted(fallback_pids):
-            if fallback_pid > 0 and fallback_pid != os.getpid() and _pid_alive(fallback_pid):
-                _kill_tree(fallback_pid)
-
-        # The supervisor should observe stop.signal and exit on its own. Kill it
-        # only if it remains after the recorder-host is already down.
-        supervisor_pid = pid
-        supervisor_deadline = time.monotonic() + 4.0
-        while supervisor_pid and _pid_alive(supervisor_pid) and time.monotonic() < supervisor_deadline:
-            time.sleep(0.1)
-        if supervisor_pid and _pid_alive(supervisor_pid):
-            _kill_tree(supervisor_pid)
-
-        _wait_endpoints_free("recorder", timeout_seconds=4.0)
+        if not _recorder_fully_stopped():
+            remaining = sorted(pid for pid in _recorder_runtime_pids() if _pid_alive(pid))
+            occupied = [
+                f"{host}:{port}/{protocol}"
+                for host, port, protocol in _service_endpoints("recorder")
+                if not _port_is_free(host, port, protocol)
+            ]
+            raise RuntimeError(
+                "Recorder stop did not reach the required post-condition. "
+                f"remaining_pids={remaining} occupied_endpoints={occupied}"
+            )
     else:
         target_pid = pid
         if target_pid and _pid_alive(target_pid) and managed:
