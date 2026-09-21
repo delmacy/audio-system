@@ -228,6 +228,20 @@ jobs:
         shell: pwsh
         run: ./scripts/recorder/Build-RecorderHost.ps1
 
+      - name: Event recorder 1000-leg buffer admission stress
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $exe = @(
+            './src/recorder-host/x64/Release/recorder-host.exe',
+            './src/recorder-host/Release/recorder-host.exe'
+          ) | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+          if (-not $exe) { throw 'recorder-host.exe not found for event scale selftest.' }
+          & $exe event-scale-selftest --legs 1000 --buffer-ms 4000 --max-admission-ms 2000
+          if ($LASTEXITCODE -ne 0) {
+            throw "Event scale selftest failed with exit code $LASTEXITCODE"
+          }
+
       - name: Build native MXF inspector
         shell: pwsh
         run: ./scripts/mxf/Build-NativeMxfLab.ps1
