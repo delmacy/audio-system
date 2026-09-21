@@ -1517,10 +1517,10 @@ gst_mxf_mux_handle_buffer (GstMXFMux * mux, GstMXFMuxPad * pad)
   outbuf = gst_buffer_append (outbuf, buf);
 
   /*
-   * Recorder extension: annotate every complete essence KLV with the
-   * structural edit-unit position that it represents. The downstream
-   * StorageWriter uses this metadata only to publish a read-safe growing-MXF
-   * watermark; it does not alter the MXF bytes.
+   * Recorder extension: annotate every complete essence KLV with the source
+   * time span that caused it to be emitted. The downstream StorageWriter uses
+   * this metadata only to publish a read-safe growing-MXF watermark; it does
+   * not alter the MXF bytes.
    */
   if (GST_CLOCK_TIME_IS_VALID (source_pts) &&
       GST_CLOCK_TIME_IS_VALID (source_duration)) {
