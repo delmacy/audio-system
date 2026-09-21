@@ -18,6 +18,7 @@ export function CwpFull({
   onToggle,
   collapsible = true,
   showConfigActions = true,
+  showDetails = true,
   registeredRadios,
   registeredTelephones,
   activeRadioIds,
@@ -29,6 +30,7 @@ export function CwpFull({
   onToggle?: () => void
   collapsible?: boolean
   showConfigActions?: boolean
+  showDetails?: boolean
   registeredRadios?: ServiceConfig[]
   registeredTelephones?: ServiceConfig[]
   activeRadioIds?: string[]
@@ -118,7 +120,7 @@ export function CwpFull({
       </section>
     </div>
 
-    {expanded && <div className="cwp-config-panel">
+    {expanded && showDetails && <div className="cwp-config-panel">
       <div className="config-grid">
         <label>Console IP<input value={config.consoleIp} readOnly /></label>
         <label>Rádios ativos<input value={currentActiveRadioIds.length} readOnly /></label>

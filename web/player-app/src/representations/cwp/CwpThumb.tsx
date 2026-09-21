@@ -29,7 +29,7 @@ export function CwpThumb({ cwp, mode, registeredRadios, registeredTelephones }: 
           <div><span>Operação</span><strong>{cwp.label}</strong></div>
           <button type="button" onClick={() => setOpen(false)} aria-label="Fechar"><X size={18} /></button>
         </header>
-        <CwpFull cwp={cwp} mode={mode} expanded collapsible={false} showConfigActions={false}
+        <CwpFull cwp={cwp} mode={mode} expanded collapsible={false} showConfigActions={false} showDetails={false}
           registeredRadios={registeredRadios} registeredTelephones={registeredTelephones} />
       </section>
     </div>}
