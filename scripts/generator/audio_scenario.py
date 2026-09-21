@@ -123,9 +123,6 @@ def _random_schedule(
             gap = duration_ms - after
         bursts.append({"on_ms": active, "off_ms": gap})
         cursor = after + gap
-        if off_ms == 0 and cursor < duration_ms:
-            # Prevent an accidental infinite/degenerate zero-gap random sequence.
-            cursor += MXF_AUDIO_EDIT_UNIT_MS
     return bursts, intervals
 
 
