@@ -79,7 +79,8 @@ jobs:
             './scripts/cwp/Invoke-ServiceMonoSessionSimulator.ps1',
             './scripts/player/Invoke-MultiTrackToneTest.ps1',
             './scripts/recorder/Invoke-GrowingMxfCiSmoke.ps1',
-            './scripts/recorder/Invoke-EventFileCiSmoke.ps1'
+            './scripts/recorder/Invoke-EventFileCiSmoke.ps1',
+            './scripts/recorder/Start-EventRecorderLab.ps1'
           )) {
             $tokens = $null
             $errors = $null
