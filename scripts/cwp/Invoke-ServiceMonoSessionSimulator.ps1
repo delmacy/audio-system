@@ -52,6 +52,7 @@ function New-RtpPacket { param([int]$Seq,[uint32]$Timestamp,[byte[]]$Payload)
     return $packet
 }
 
+$mxfAudioEditUnitMs = 100
 $scheduleBursts = @()
 $effectiveStartDelayMs = $StartDelayMs
 if ($ScheduleFile) {
@@ -60,6 +61,19 @@ if ($ScheduleFile) {
     if ($null -ne $schedule.start_offset_ms) { $effectiveStartDelayMs = [int]$schedule.start_offset_ms }
     $scheduleBursts = @($schedule.bursts)
     if ($scheduleBursts.Count -le 0) { throw 'Schedule file contains no bursts.' }
+    if (($effectiveStartDelayMs % $mxfAudioEditUnitMs) -ne 0) {
+        throw "Scheduled start offset must align to the $mxfAudioEditUnitMs ms MXF A-law edit unit."
+    }
+    foreach ($scheduledBurst in $scheduleBursts) {
+        $onMs = [int]$scheduledBurst.on_ms
+        $offMs = [int]$scheduledBurst.off_ms
+        if ($onMs -le 0 -or ($onMs % $mxfAudioEditUnitMs) -ne 0) {
+            throw "Scheduled on_ms=$onMs must be a positive multiple of $mxfAudioEditUnitMs ms."
+        }
+        if ($offMs -lt 0 -or ($offMs % $mxfAudioEditUnitMs) -ne 0) {
+            throw "Scheduled off_ms=$offMs must be a non-negative multiple of $mxfAudioEditUnitMs ms."
+        }
+    }
 }
 if ($effectiveStartDelayMs -gt 0) { Start-Sleep -Milliseconds $effectiveStartDelayMs }
 
