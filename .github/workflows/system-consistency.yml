@@ -31,7 +31,7 @@ jobs:
           python-version: '3.13'
 
       - name: Compile Python sources
-        run: python -m compileall -q scripts/player scripts/gateway
+        run: python -m compileall -q scripts/player scripts/gateway scripts/generator
 
       - name: Growing MXF KLV tests
         working-directory: scripts/player
@@ -39,6 +39,12 @@ jobs:
 
       - name: Audio generator selftest
         run: python scripts/generator/audio_generator.py --selftest
+
+      - name: Tone scenario planner tests
+        working-directory: scripts/generator
+        run: |
+          python audio_scenario.py --selftest
+          python -m unittest -v test_audio_scenario.py
 
       - name: Set up Node
         uses: actions/setup-node@v4
