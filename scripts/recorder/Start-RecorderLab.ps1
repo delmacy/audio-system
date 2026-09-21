@@ -17,15 +17,17 @@ $now = Get-Date
 $runDir = Join-Path $root ('runs\operational-recorder\' + $now.ToString('yyyyMMdd-HHmmssfff'))
 New-Item -ItemType Directory -Force -Path $runDir | Out-Null
 
-$recordingDir = Join-Path $root ('recordings\{0}\{1}\{2}\radio' -f $now.ToString('yyyy'),$now.ToString('MM'),$now.ToString('dd'))
-New-Item -ItemType Directory -Force -Path $recordingDir | Out-Null
-$windowMinute = [int]([Math]::Floor($now.Minute / 60) * 60)
-$windowStamp = ('{0}-{1:00}{2:00}' -f $now.ToString('yyyyMMdd'),$now.Hour,$windowMinute)
+$layoutScript = Join-Path $root 'scripts\player\recording_layout.py'
+$layoutJson = & python $layoutScript
+if ($LASTEXITCODE -ne 0 -or -not $layoutJson) { throw 'Falha ao resolver layout operacional de gravação.' }
+$layout = ($layoutJson -join [Environment]::NewLine) | ConvertFrom-Json
+$radioTarget = $layout.paths.radio
 
 $endpoint = 'CWP-LAB-01'; $service = 'LAB-121500'; $rtp = 20500
 $identity = New-ServiceLogicalTrackIdentity -ServiceType radio -ServiceId $service -EndpointId $endpoint -MediaFlow mono
-$stem = Join-Path $recordingDir ('radio-' + $windowStamp)
-$partial = $stem + '.mxf.partial'; $final = $stem + '.mxf'; $lock = $stem + '.mxf.lock'
+$partial = [string]$radioTarget.partial
+$final = [string]$radioTarget.file
+$lock = [string]$radioTarget.lock
 $route = "/record/$endpoint/radio-$($service.ToLowerInvariant())-rx"
 $fields = @($route,$endpoint,$service,'mono','squ',[string]$identity.display_name,[string]$identity.logical_track_uuid,[string]$identity.track_instance_uuid,('OP-' + [Guid]::NewGuid().ToString()),$partial,$final,$lock,[string]$rtp,([DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:00:00.000Z')),'0','radio')
 $header = @('route_key','endpoint_id','service_id','media_flow','activity_signal','display_name','logical_uuid','instance_uuid','file_id','output_partial','output_final','lock_path','rtp_port','window_start_utc','segment_sequence','session_kind')

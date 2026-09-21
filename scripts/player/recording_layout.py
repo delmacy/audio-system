@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+import json
 from pathlib import Path
 
 from config_store import connect, initialize, utc_now
@@ -129,3 +130,7 @@ def recording_layout_snapshot() -> dict:
 
 
 _ensure_settings()
+
+
+if __name__ == "__main__":
+    print(json.dumps(recording_layout_snapshot(), ensure_ascii=False))
