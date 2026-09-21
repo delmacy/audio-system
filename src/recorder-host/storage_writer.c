@@ -57,7 +57,7 @@ int storage_writer_write_lock_state(StorageWriter *writer, const char *state, ch
     FILE *fp;
     char now[64];
     char temp_path[4352];
-    char e_file_id[256], e_recorder_id[256], e_partial[8192], e_final[8192], e_window[128];
+    char e_file_id[256], e_recorder_id[256], e_partial[8192], e_final[8192], e_window[128], e_origin[128];
     if (!writer || !writer->lock_path[0]) return 1;
     storage_utc_now(now, sizeof(now));
     json_escape(writer->file_id, e_file_id, sizeof(e_file_id));
@@ -65,6 +65,7 @@ int storage_writer_write_lock_state(StorageWriter *writer, const char *state, ch
     json_escape(writer->partial_path, e_partial, sizeof(e_partial));
     json_escape(writer->final_path, e_final, sizeof(e_final));
     json_escape(writer->window_start_utc, e_window, sizeof(e_window));
+    json_escape(writer->timeline_origin_utc, e_origin, sizeof(e_origin));
 
     /*
      * Readers poll this sidecar while the recorder is running. Write a sibling
@@ -89,6 +90,7 @@ int storage_writer_write_lock_state(StorageWriter *writer, const char *state, ch
         "  \"partial_path\": \"%s\",\n"
         "  \"expected_final_name\": \"%s\",\n"
         "  \"recording_window_start_utc\": \"%s\",\n"
+        "  \"timeline_origin_utc\": \"%s\",\n"
         "  \"segment_sequence\": %u,\n"
         "  \"last_heartbeat_utc\": \"%s\",\n"
         "  \"bytes_written\": %llu,\n"
@@ -105,6 +107,7 @@ int storage_writer_write_lock_state(StorageWriter *writer, const char *state, ch
         e_partial,
         e_final,
         e_window,
+        e_origin,
         writer->segment_sequence,
         now,
         writer->bytes_written,
