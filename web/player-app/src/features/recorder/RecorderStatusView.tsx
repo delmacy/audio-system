@@ -1,4 +1,4 @@
-import { Activity, Cpu, FileAudio, HardDrive, Network, Phone, Play, Radio, RadioTower, RefreshCw, RotateCcw, Save, Server, Square } from 'lucide-react'
+import { Activity, Cpu, FileAudio, HardDrive, LoaderCircle, Network, Phone, Play, Radio, RadioTower, RefreshCw, RotateCcw, Save, Server, Square } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
 type RecordingFileStatus = {
@@ -182,8 +182,66 @@ export function RecorderStatusView() {
     }
   }
 
+  const refreshRuntimeState = async () => {
+    const [recorder, systemStatus] = await Promise.all([
+      responseJson<RecorderStatusPayload>(
+        await fetch('/api/recorder/status', { headers: { Accept: 'application/json' } }),
+      ),
+      responseJson<SystemStatusPayload>(
+        await fetch('/api/system/status', { headers: { Accept: 'application/json' } }),
+      ),
+    ])
+    setData(recorder)
+    setSystem(systemStatus)
+    return { recorder, systemStatus }
+  }
+
+  const waitForRecorderTransition = async (
+    action: 'start' | 'stop' | 'restart',
+    initialRunId: string | null,
+  ) => {
+    const deadline = Date.now() + 20000
+    while (Date.now() < deadline) {
+      const { recorder, systemStatus } = await refreshRuntimeState()
+      const recorderService = systemStatus.services.recorder
+
+      if (action === 'stop') {
+        if (
+          !recorderService.running
+          && (recorder.runtime_status === 'offline' || recorder.runtime_status === 'unconfigured')
+        ) return
+      } else if (action === 'start') {
+        if (
+          recorderService.running
+          && (recorder.runtime_status === 'recording' || recorder.runtime_status === 'online')
+        ) return
+      } else {
+        const newRunObserved = Boolean(
+          recorder.recording.run_id
+          && recorder.recording.run_id !== initialRunId,
+        )
+        if (
+          recorderService.running
+          && newRunObserved
+          && (recorder.runtime_status === 'recording' || recorder.runtime_status === 'online')
+        ) return
+      }
+
+      await new Promise(resolve => window.setTimeout(resolve, 250))
+    }
+
+    throw new Error(
+      action === 'stop'
+        ? 'O comando de parada foi enviado, mas o gravador não confirmou o estado Parado no tempo esperado.'
+        : action === 'start'
+          ? 'O comando de início foi enviado, mas o gravador não confirmou o estado ativo no tempo esperado.'
+          : 'O reinício foi enviado, mas uma nova execução do gravador não foi confirmada no tempo esperado.',
+    )
+  }
+
   const controlService = async (service: 'recorder' | 'rps' | 'simulator', action: 'start' | 'stop' | 'restart') => {
     const key = service + ':' + action
+    const initialRunId = data?.recording.run_id ?? null
     setServiceAction(key)
     setError('')
     try {
@@ -194,7 +252,12 @@ export function RecorderStatusView() {
         }),
       )
       setSystem(payload.system)
-      await load()
+
+      if (service === 'recorder') {
+        await waitForRecorderTransition(action, initialRunId)
+      } else {
+        await load()
+      }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Falha ao controlar serviço.')
     } finally {
@@ -209,6 +272,14 @@ export function RecorderStatusView() {
   }, [data?.checked_utc])
 
   const runtimeStatus = data?.runtime_status ?? 'offline'
+  const recorderAction = serviceAction.startsWith('recorder:') ? serviceAction.split(':')[1] : ''
+  const recorderTransitionLabel = recorderAction === 'stop'
+    ? 'Parando...'
+    : recorderAction === 'start'
+      ? 'Iniciando...'
+      : recorderAction === 'restart'
+        ? 'Reiniciando...'
+        : ''
   const files = data?.recording_layout.files
   const telephoneCapacity = data?.telephone_capacity
 
@@ -220,13 +291,15 @@ export function RecorderStatusView() {
         <p>Três MXF simultâneos: CWP, rádio e telefone, organizados por ano/mês/dia/categoria.</p>
       </div>
       <div className="recorder-header-actions">
-        <span className={'recorder-live-state ' + runtimeStatus}>
-          {runtimeStatus === 'recording'
-            ? <span className="recorder-recording-pulse" aria-hidden="true" />
-            : runtimeStatus === 'offline'
-              ? <Square className="recorder-stopped-icon" size={10} fill="currentColor" aria-hidden="true" />
-              : <i aria-hidden="true" />}
-          {statusLabel(runtimeStatus)}
+        <span className={'recorder-live-state ' + (recorderAction ? 'transitioning' : runtimeStatus)}>
+          {recorderAction
+            ? <LoaderCircle className="recorder-transition-spinner" size={13} aria-hidden="true" />
+            : runtimeStatus === 'recording'
+              ? <span className="recorder-recording-pulse" aria-hidden="true" />
+              : runtimeStatus === 'offline'
+                ? <Square className="recorder-stopped-icon" size={10} fill="currentColor" aria-hidden="true" />
+                : <i aria-hidden="true" />}
+          {recorderTransitionLabel || statusLabel(runtimeStatus)}
         </span>
         <button type="button" onClick={() => void controlService('recorder', 'start')} disabled={Boolean(system?.services.recorder.running) || Boolean(serviceAction)}><Play size={14} />Iniciar</button>
         <button type="button" onClick={() => void controlService('recorder', 'stop')} disabled={!system?.services.recorder.running || Boolean(serviceAction)}><Square size={13} />Parar</button>

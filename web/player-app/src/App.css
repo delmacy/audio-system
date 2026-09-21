@@ -2456,3 +2456,20 @@ button:focus-visible,input:focus-visible,select:focus-visible,[role=slider]:focu
 @media(max-width:700px){
   .recorder-service-grid{grid-template-columns:1fr}
 }
+
+
+.recorder-live-state.transitioning{
+  color:#49677f;
+  border-color:#c9d8e5;
+  background:#f7fafc;
+}
+.recorder-transition-spinner{
+  flex:none;
+  animation:recorder-transition-spin .8s linear infinite;
+}
+@keyframes recorder-transition-spin{
+  to{transform:rotate(360deg)}
+}
+@media (prefers-reduced-motion:reduce){
+  .recorder-transition-spinner{animation-duration:1.8s}
+}
