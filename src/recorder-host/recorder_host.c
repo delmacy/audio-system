@@ -146,6 +146,7 @@ struct SharedMuxGroup {
     char lock_path[4096];
     char file_id[128];
     char window_start_utc[64];
+    char timeline_origin_utc[64];
     char category[32];
     unsigned int segment_sequence;
     StorageWriter writer;
@@ -732,6 +733,9 @@ static int build_shared_groups(RecorderHost *host) {
             }
         }
         group->bus = gst_element_get_bus(group->pipeline);
+        storage_utc_now(group->timeline_origin_utc, sizeof(group->timeline_origin_utc));
+        safe_copy(group->writer.timeline_origin_utc,
+            sizeof(group->writer.timeline_origin_utc), group->timeline_origin_utc);
         group->started_tick_ms = GetTickCount64();
         state_result = gst_element_set_state(group->pipeline, GST_STATE_PLAYING);
         if (state_result == GST_STATE_CHANGE_FAILURE) return 0;
