@@ -1163,12 +1163,240 @@ static int maybe_rotate_window_after_pause(RecorderSession *session) {
     return 1;
 }
 
+static void ensure_event_identity(RecorderSession *session) {
+    if (!session) return;
+    if (!session->interaction_id[0])
+        make_guid_string(session->interaction_id, sizeof(session->interaction_id));
+    if (!session->leg_id[0])
+        make_guid_string(session->leg_id, sizeof(session->leg_id));
+}
+
+static int open_event_file(RecorderSession *session) {
+    EventFileRequest request;
+    EventFilePaths paths;
+    char error_text[1024] = {0};
+    char detail[4096];
+
+    if (!session || !session->host || !session->host->cfg.event_files_mode)
+        return 0;
+    if (session->event_file_open) return 1;
+    if (session->event_close_requested) {
+        audit_event(session->host, session, "INTEGRITY_WARNING",
+            "Event file open requested while previous file is still queued for close");
+        return 0;
+    }
+
+    ensure_event_identity(session);
+    if (!session->event_media_start_utc[0])
+        storage_utc_now(session->event_media_start_utc,
+            sizeof(session->event_media_start_utc));
+
+    memset(&request, 0, sizeof(request));
+    request.recording_root = session->host->cfg.recording_root;
+    request.service_id = session->cfg.service_id;
+    request.endpoint_id = session->cfg.endpoint_id;
+    request.interaction_id = session->interaction_id;
+    request.leg_id = session->leg_id;
+    request.media_start_utc = session->event_media_start_utc;
+
+    if (!event_file_manager_build_paths(
+            &request, &paths, error_text, sizeof(error_text))) {
+        audit_event(session->host, session, "INTEGRITY_FAILURE", error_text);
+        return 0;
+    }
+
+    safe_copy(session->cfg.output_final, sizeof(session->cfg.output_final),
+        paths.final_path);
+    safe_copy(session->cfg.output_partial, sizeof(session->cfg.output_partial),
+        paths.partial_path);
+    safe_copy(session->cfg.lock_path, sizeof(session->cfg.lock_path),
+        paths.lock_path);
+    safe_copy(session->cfg.file_id, sizeof(session->cfg.file_id),
+        paths.file_id);
+    safe_copy(session->cfg.window_start_utc,
+        sizeof(session->cfg.window_start_utc),
+        session->event_media_start_utc);
+    session->cfg.segment_sequence = ++session->event_sequence;
+    make_guid_string(session->cfg.instance_uuid,
+        sizeof(session->cfg.instance_uuid));
+    session->pipeline_error = 0;
+    session->sink_error = 0;
+    storage_writer_init(&session->writer);
+
+    if (!storage_writer_open(&session->writer,
+            session->cfg.output_partial,
+            session->cfg.output_final,
+            session->cfg.lock_path,
+            session->cfg.file_id,
+            session->host->cfg.recorder_id,
+            session->cfg.window_start_utc,
+            session->cfg.segment_sequence,
+            error_text,
+            sizeof(error_text))) {
+        audit_event(session->host, session, "INTEGRITY_FAILURE", error_text);
+        return 0;
+    }
+    if (!build_pipeline(session)) {
+        audit_event(session->host, session, "INTEGRITY_FAILURE",
+            "Event-file MXF pipeline build failed");
+        storage_writer_abort(&session->writer);
+        return 0;
+    }
+
+    session->event_file_open = 1;
+    session->window_open_count++;
+    if (_stricmp(session->event_state, "IDLE") == 0 ||
+        _stricmp(session->event_state, "N/A") == 0) {
+        safe_copy(session->event_state, sizeof(session->event_state),
+            _stricmp(session->cfg.session_kind, "telephone") == 0
+                ? "RINGING" : "ACTIVE");
+    }
+    snprintf(detail, sizeof(detail),
+        "interaction_id=%s leg_id=%s media_start_utc=%s service=%s endpoint=%s final=%s",
+        session->interaction_id, session->leg_id,
+        session->event_media_start_utc, session->cfg.service_id,
+        session->cfg.endpoint_id, session->cfg.output_final);
+    audit_event(session->host, session, "EVENT_FILE_OPEN", detail);
+    return 1;
+}
+
+static void request_event_file_close(
+    RecorderSession *session,
+    const char *reason,
+    const char *event_utc) {
+
+    if (!session || !session->host || !session->host->cfg.event_files_mode)
+        return;
+    if (event_utc && *event_utc)
+        safe_copy(session->event_last_event_utc,
+            sizeof(session->event_last_event_utc), event_utc);
+    else
+        storage_utc_now(session->event_last_event_utc,
+            sizeof(session->event_last_event_utc));
+
+    session->recording = 0;
+    if (session->media_active) {
+        audit_media_boundary(session, "MEDIA_END",
+            reason ? reason : "Event boundary closed media");
+        session->media_active = 0;
+        session->media_intervals_closed++;
+    }
+    session->event_close_requested = 1;
+    if (_stricmp(session->event_state, "RING_NOT_ANSWERED") != 0 &&
+        _stricmp(session->event_state, "HANGUP") != 0)
+        safe_copy(session->event_state, sizeof(session->event_state),
+            "FINALIZING");
+    audit_event(session->host, session, "EVENT_FILE_CLOSE_QUEUED",
+        reason ? reason : "Event-file close queued");
+}
+
+static int close_event_file_now(RecorderSession *session, const char *reason) {
+    int ok = 1;
+    char detail[4096];
+
+    if (!session || !session->host || !session->host->cfg.event_files_mode)
+        return 0;
+
+    if (session->event_file_open) {
+        ok = close_current_window_only(session,
+            reason ? reason : "Event-file lifecycle close");
+        session->event_file_open = 0;
+    }
+    session->event_close_requested = 0;
+
+    snprintf(detail, sizeof(detail),
+        "interaction_id=%s leg_id=%s media_start_utc=%s event_utc=%s final=%s result=%s",
+        session->interaction_id, session->leg_id,
+        session->event_media_start_utc, session->event_last_event_utc,
+        session->cfg.output_final, ok ? "CLOSED_COMPLETE" : "RECOVERY_REQUIRED");
+    audit_event(session->host, session,
+        ok ? "EVENT_FILE_CLOSED" : "EVENT_FILE_CLOSE_FAILED", detail);
+    if (_stricmp(session->event_state, "RING_NOT_ANSWERED") != 0 &&
+        _stricmp(session->event_state, "HANGUP") != 0)
+        safe_copy(session->event_state, sizeof(session->event_state),
+            ok ? "CLOSED" : "RECOVERY_REQUIRED");
+    return ok;
+}
+
+static void rearm_event_route(RecorderSession *session, const char *reason) {
+    if (!session || !session->host || !session->host->cfg.event_files_mode)
+        return;
+    session->announced = 0;
+    session->setup_done = 0;
+    session->recording = 0;
+    session->media_active = 0;
+    session->service_enabled = 0;
+    session->teardown_received = 0;
+    session->first_rtp_timestamp_valid = 0;
+    session->last_timestamp_valid = 0;
+    session->last_sequence_valid = 0;
+    session->last_payload_len = 0;
+    session->event_answered = 0;
+    session->event_rearm_requested = 0;
+    session->interaction_id[0] = 0;
+    session->leg_id[0] = 0;
+    session->event_media_start_utc[0] = 0;
+    session->event_last_event_utc[0] = 0;
+    safe_copy(session->event_state, sizeof(session->event_state), "IDLE");
+    snprintf(session->session_id, sizeof(session->session_id),
+        "P5-%lu-%02d-%llu",
+        (unsigned long)GetCurrentProcessId(),
+        (int)(session - session->host->sessions) + 1,
+        (unsigned long long)GetTickCount64());
+    audit_event(session->host, session, "ROUTE_REARMED",
+        reason ? reason : "Event route rearmed for next interaction");
+}
+
+static int process_event_file_closures(RecorderHost *host, int budget) {
+    int i, processed = 0;
+    if (!host || !host->cfg.event_files_mode) return 1;
+    if (budget <= 0) budget = 1;
+
+    for (i = 0; i < host->session_count && processed < budget; i++) {
+        RecorderSession *session = &host->sessions[i];
+        if (!session->event_close_requested) continue;
+        if (!close_event_file_now(session, "Deferred event-file finalization")) {
+            host->server_failed = 1;
+            return 0;
+        }
+        processed++;
+        if (session->event_rearm_requested)
+            rearm_event_route(session,
+                "Event file finalized and route became reusable");
+    }
+    return 1;
+}
+
 static int finalize_session(RecorderSession *session, const char *reason) {
     GstFlowReturn flow = GST_FLOW_ERROR;
     GstMessage *msg = NULL;
     int ok = 1;
     char error_text[1024] = {0};
     if (!session || session->finalized) return session ? session->final_ok : 0;
+    if (session->host && session->host->cfg.event_files_mode) {
+        if (session->media_active) {
+            audit_media_boundary(session, "MEDIA_END",
+                reason ? reason : "Host finalization closed event media");
+            session->media_active = 0;
+            session->media_intervals_closed++;
+        }
+        session->recording = 0;
+        if (session->event_file_open || session->event_close_requested) {
+            if (!session->event_last_event_utc[0])
+                storage_utc_now(session->event_last_event_utc,
+                    sizeof(session->event_last_event_utc));
+            ok = close_event_file_now(session,
+                reason ? reason : "Host shutdown finalized event file");
+        }
+        if (session->rtp_socket != INVALID_SOCKET) {
+            closesocket(session->rtp_socket);
+            session->rtp_socket = INVALID_SOCKET;
+        }
+        session->finalized = 1;
+        session->final_ok = ok;
+        session->failed = !ok;
+        return ok;
+    }
     if (session->media_active) {
         audit_media_boundary(session, "MEDIA_END", reason ? reason : "Session finalization closed media interval");
         session->media_active = 0;
@@ -1286,7 +1514,9 @@ static void abort_session(RecorderSession *session, const char *reason) {
         return;
     }
     if (session->pipeline) gst_element_set_state(session->pipeline, GST_STATE_NULL);
-    storage_writer_abort(&session->writer);
+    if (!session->host->cfg.event_files_mode || session->event_file_open)
+        storage_writer_abort(&session->writer);
+    session->event_file_open = 0;
     if (session->rtp_socket != INVALID_SOCKET) closesocket(session->rtp_socket);
     session->rtp_socket = INVALID_SOCKET;
     destroy_pipeline(session);
