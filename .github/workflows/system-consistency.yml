@@ -37,6 +37,9 @@ jobs:
         working-directory: scripts/player
         run: python -m unittest -v test_growing_mxf.py
 
+      - name: Audio generator selftest
+        run: python scripts/generator/audio_generator.py --selftest
+
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
