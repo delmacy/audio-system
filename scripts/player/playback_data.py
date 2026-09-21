@@ -23,6 +23,9 @@ SAMPLE_RATE = 8000
 BYTES_PER_SAMPLE = 2
 BYTES_PER_MS = SAMPLE_RATE * BYTES_PER_SAMPLE / 1000.0
 MAX_WINDOW_SECONDS = 15 * 60
+EDIT_UNIT_NS = 100_000_000
+SAMPLES_PER_EDIT_UNIT = SAMPLE_RATE // 10
+GC_ESSENCE_PREFIX = bytes.fromhex("060e2b34010201010d010301")
 
 
 def parse_utc(value: str) -> datetime:
@@ -72,47 +75,151 @@ def _candidate_tracks(logical_track_uuid: str) -> list[tuple[Path, dict, list[di
     return candidates
 
 
-def resolve_operational_track(logical_track_uuid: str) -> dict:
-    for run, track, events in _candidate_tracks(logical_track_uuid):
-        mxf = Path(track["final_mxf"]).resolve()
-        if mxf.parent != run.resolve() or mxf.suffix.lower() != ".mxf" or not mxf.is_file():
-            continue
+def _matching_events(track: dict, events: list[dict]) -> list[dict]:
+    instance = str(track["track_instance_uuid"])
+    logical = str(track["logical_track_uuid"])
+    return [
+        event for event in events
+        if str(event.get("logical_track_uuid", "")) == logical
+        and str(event.get("track_instance_uuid", "")) == instance
+    ]
 
-        instance = str(track["track_instance_uuid"])
-        lt = str(track["logical_track_uuid"])
-        matching = [
-            event for event in events
-            if str(event.get("logical_track_uuid", "")) == lt
-            and str(event.get("track_instance_uuid", "")) == instance
-        ]
-        kinds = {event.get("event") for event in matching}
-        if not {"WINDOW_CLOSED_COMPLETE", "MEDIA_COMMIT"}.issubset(kinds):
-            continue
 
-        intervals = []
-        opened = None
-        for event in matching:
-            if event.get("event") == "MEDIA_START":
-                opened = event.get("ts_utc")
-            elif event.get("event") == "MEDIA_END" and opened:
-                end = event.get("ts_utc")
-                if end and parse_utc(end) > parse_utc(opened):
-                    intervals.append({"start_utc": opened, "end_utc": end})
-                opened = None
+def _media_intervals(matching: list[dict], confirmed_end: datetime | None = None) -> list[dict]:
+    intervals: list[dict] = []
+    opened: str | None = None
+    for event in matching:
+        if event.get("event") == "MEDIA_START":
+            opened = event.get("ts_utc")
+        elif event.get("event") == "MEDIA_END" and opened:
+            end = event.get("ts_utc")
+            if end:
+                a, z = parse_utc(opened), parse_utc(end)
+                if confirmed_end is not None:
+                    z = min(z, confirmed_end)
+                if z > a:
+                    intervals.append({"start_utc": iso(a), "end_utc": iso(z)})
+            opened = None
+    if opened and confirmed_end is not None:
+        a = parse_utc(opened)
+        if confirmed_end > a:
+            intervals.append({"start_utc": iso(a), "end_utc": iso(confirmed_end), "current": True})
+    return intervals
 
-        if intervals:
-            return {
-                "run": run,
-                "mxf": mxf,
-                "track": track,
-                "intervals": intervals,
-            }
 
-    raise LookupError(f"No closed operational MXF found for LogicalTrackUUID {logical_track_uuid}")
+def _range_overlaps(start: datetime, end: datetime, from_utc: str | None, to_utc: str | None) -> bool:
+    requested_start = parse_utc(from_utc) if from_utc else start
+    requested_end = parse_utc(to_utc) if to_utc else end
+    return requested_start < end and requested_end > start
+
+
+def _load_growing_candidate(run: Path, track: dict, events: list[dict],
+                            from_utc: str | None, to_utc: str | None) -> dict | None:
+    final_mxf = Path(track["final_mxf"]).resolve()
+    lock_path = Path(str(final_mxf) + ".lock")
+    if not lock_path.is_file():
+        return None
+    try:
+        lock = _read_json(lock_path)
+        if lock.get("state") != "RECORDING_LOCKED" or not lock.get("read_safe"):
+            return None
+        if track.get("file_id") and str(lock.get("file_id") or "") != str(track.get("file_id")):
+            return None
+        committed_position_ns = int(lock.get("committed_position_ns") or 0)
+        flushed_bytes = int(lock.get("flushed_bytes") or 0)
+        if committed_position_ns <= 0 or flushed_bytes <= 0:
+            return None
+        partial = Path(str(lock.get("partial_path") or "")).resolve()
+        allowed = partial.parent == run.resolve() or partial.is_relative_to((ROOT / "recordings").resolve())
+        if not allowed or not partial.is_file():
+            return None
+        flushed_bytes = min(flushed_bytes, partial.stat().st_size)
+        window_start = parse_utc(str(lock["recording_window_start_utc"]))
+        confirmed_end = window_start + (datetime.fromtimestamp(
+            committed_position_ns / 1_000_000_000, tz=timezone.utc
+        ) - datetime.fromtimestamp(0, tz=timezone.utc))
+        if not _range_overlaps(window_start, confirmed_end, from_utc, to_utc):
+            return None
+        matching = _matching_events(track, events)
+        intervals = _media_intervals(matching, confirmed_end)
+        if not intervals:
+            return None
+        return {
+            "run": run,
+            "mxf": partial,
+            "final_mxf": final_mxf,
+            "track": track,
+            "intervals": intervals,
+            "open": True,
+            "lock": lock,
+            "window_start_utc": iso(window_start),
+            "confirmed_until_utc": iso(confirmed_end),
+            "committed_position_ns": committed_position_ns,
+            "flushed_bytes": flushed_bytes,
+            "commit_generation": int(lock.get("commit_generation") or 0),
+            "commit_lag_target_ms": int(lock.get("commit_lag_target_ms") or 0),
+        }
+    except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError):
+        return None
+
+
+def _load_closed_candidate(run: Path, track: dict, events: list[dict],
+                           from_utc: str | None, to_utc: str | None) -> dict | None:
+    mxf = Path(track["final_mxf"]).resolve()
+    allowed = mxf.parent == run.resolve() or mxf.is_relative_to((ROOT / "recordings").resolve())
+    if not allowed or mxf.suffix.lower() != ".mxf" or not mxf.is_file():
+        return None
+
+    matching = _matching_events(track, events)
+    kinds = {event.get("event") for event in matching}
+    classic_closed = {"WINDOW_CLOSED_COMPLETE", "MEDIA_COMMIT"}.issubset(kinds)
+    file_id = str(track.get("file_id") or "")
+    category = str(track.get("category") or "")
+    shared_closed = any(
+        event.get("event") == "SHARED_MXF_CLOSED_COMPLETE"
+        and (
+            (file_id and f"file_id={file_id}" in str(event.get("detail") or ""))
+            or (category and f"category={category}" in str(event.get("detail") or ""))
+        )
+        for event in events
+    )
+    if not classic_closed and not shared_closed:
+        return None
+
+    intervals = _media_intervals(matching)
+    if not intervals:
+        return None
+    natural_start = parse_utc(intervals[0]["start_utc"])
+    natural_end = parse_utc(intervals[-1]["end_utc"])
+    if not _range_overlaps(natural_start, natural_end, from_utc, to_utc):
+        return None
+    return {"run": run, "mxf": mxf, "track": track, "intervals": intervals, "open": False}
+
+
+def resolve_operational_track(
+    logical_track_uuid: str,
+    from_utc: str | None = None,
+    to_utc: str | None = None,
+) -> dict:
+    candidates = _candidate_tracks(logical_track_uuid)
+
+    # Prefer the current growing file when the requested range overlaps its
+    # confirmed prefix. Historical requests naturally fall through to closed MXFs.
+    for run, track, events in candidates:
+        growing = _load_growing_candidate(run, track, events, from_utc, to_utc)
+        if growing:
+            return growing
+
+    for run, track, events in candidates:
+        closed = _load_closed_candidate(run, track, events, from_utc, to_utc)
+        if closed:
+            return closed
+
+    raise LookupError(f"No confirmed operational MXF found for LogicalTrackUUID {logical_track_uuid}")
 
 
 def build_operational_plan(logical_track_uuid: str, from_utc: str | None = None, to_utc: str | None = None) -> dict:
-    resolved = resolve_operational_track(logical_track_uuid)
+    resolved = resolve_operational_track(logical_track_uuid, from_utc, to_utc)
     intervals = resolved["intervals"]
     natural_from = parse_utc(intervals[0]["start_utc"])
     natural_to = parse_utc(intervals[-1]["end_utc"])
@@ -160,7 +267,12 @@ def build_operational_plan(logical_track_uuid: str, from_utc: str | None = None,
     track = resolved["track"]
     return {
         "schema": "audio-system.operational-playback-plan.v1",
-        "source_scope": "closed_operational_mxf_recorder_audit",
+        "source_scope": "growing_mxf_confirmed" if resolved.get("open") else "closed_operational_mxf_recorder_audit",
+        "open": bool(resolved.get("open")),
+        "presentation_only": bool(resolved.get("open")),
+        "confirmed_until_utc": resolved.get("confirmed_until_utc"),
+        "commit_generation": resolved.get("commit_generation"),
+        "commit_lag_target_ms": resolved.get("commit_lag_target_ms"),
         "logical_track_uuid": str(track["logical_track_uuid"]),
         "track_instance_uuid": str(track["track_instance_uuid"]),
         "service_id": str(track.get("service_id", "")),
@@ -180,6 +292,122 @@ def build_operational_plan(logical_track_uuid: str, from_utc: str | None = None,
             "gap_ms": round(sum(item["duration_ms"] for item in items if item["kind"] == "gap"), 3),
         },
     }
+
+
+def _decode_alaw_byte(value: int) -> int:
+    value ^= 0x55
+    magnitude = (value & 0x0F) << 4
+    segment = (value & 0x70) >> 4
+    if segment == 0:
+        magnitude += 8
+    elif segment == 1:
+        magnitude += 0x108
+    else:
+        magnitude += 0x108
+        magnitude <<= segment - 1
+    return magnitude if value & 0x80 else -magnitude
+
+
+ALAW_PCM_BYTES = tuple(struct.pack("<h", _decode_alaw_byte(value)) for value in range(256))
+
+
+def _read_ber_length(stream, remaining: int) -> tuple[int, int] | None:
+    if remaining < 1:
+        return None
+    first_raw = stream.read(1)
+    if len(first_raw) != 1:
+        return None
+    first = first_raw[0]
+    if not (first & 0x80):
+        return first, 1
+    octets = first & 0x7F
+    if octets == 0 or octets > 8 or remaining < 1 + octets:
+        return None
+    encoded = stream.read(octets)
+    if len(encoded) != octets:
+        return None
+    return int.from_bytes(encoded, "big"), 1 + octets
+
+
+def _is_target_audio_klv(key: bytes, track_index: int) -> bool:
+    return (
+        len(key) == 16
+        and key[:12] == GC_ESSENCE_PREFIX
+        and key[12] == 0x16
+        and key[14] in (0x08, 0x09, 0x0A)
+        and key[15] == track_index + 1
+    )
+
+
+def _decode_growing_window(resolved: dict, start: datetime, end: datetime) -> bytes:
+    window_start = parse_utc(resolved["window_start_utc"])
+    if end <= start:
+        return b""
+
+    total_samples = max(0, int(round((end - start).total_seconds() * SAMPLE_RATE)))
+    output = bytearray(total_samples * BYTES_PER_SAMPLE)
+    if total_samples == 0:
+        return bytes(output)
+
+    request_start_sample = int(round((start - window_start).total_seconds() * SAMPLE_RATE))
+    request_end_sample = request_start_sample + total_samples
+    confirmed_samples = int(resolved["committed_position_ns"] * SAMPLE_RATE // 1_000_000_000)
+    target_track = int(resolved["track"].get("track_index", 0))
+    limit = int(resolved["flushed_bytes"])
+    unit_index = 0
+
+    with Path(resolved["mxf"]).open("rb") as stream:
+        offset = 0
+        while offset + 17 <= limit:
+            key = stream.read(16)
+            if len(key) != 16:
+                break
+            offset += 16
+            decoded = _read_ber_length(stream, limit - offset)
+            if decoded is None:
+                break
+            value_length, ber_size = decoded
+            offset += ber_size
+            if value_length < 0 or value_length > limit - offset:
+                break
+
+            target = _is_target_audio_klv(key, target_track)
+            if not target:
+                stream.seek(value_length, 1)
+                offset += value_length
+                continue
+
+            unit_start_sample = unit_index * SAMPLES_PER_EDIT_UNIT
+            unit_index += 1
+            if unit_start_sample >= confirmed_samples:
+                break
+
+            payload = stream.read(value_length)
+            if len(payload) != value_length:
+                break
+            offset += value_length
+
+            unit_end_sample = min(unit_start_sample + SAMPLES_PER_EDIT_UNIT, confirmed_samples)
+            overlap_start = max(unit_start_sample, request_start_sample)
+            overlap_end = min(unit_end_sample, request_end_sample)
+            if overlap_end <= overlap_start or not payload:
+                if unit_start_sample >= request_end_sample:
+                    break
+                continue
+
+            decoded_pcm = b"".join(ALAW_PCM_BYTES[value] for value in payload[:SAMPLES_PER_EDIT_UNIT])
+            available_samples = len(decoded_pcm) // BYTES_PER_SAMPLE
+            source_from = overlap_start - unit_start_sample
+            source_to = min(overlap_end - unit_start_sample, available_samples)
+            if source_to > source_from:
+                target_from = overlap_start - request_start_sample
+                chunk = decoded_pcm[source_from * 2:source_to * 2]
+                output[target_from * 2:target_from * 2 + len(chunk)] = chunk
+
+            if unit_start_sample >= request_end_sample:
+                break
+
+    return bytes(output)
 
 
 def _ffmpeg() -> str:
@@ -219,7 +447,7 @@ def _wav_bytes(pcm: bytes) -> bytes:
 
 
 def render_operational_wav(logical_track_uuid: str, from_utc: str | None = None, to_utc: str | None = None) -> tuple[dict, bytes]:
-    resolved = resolve_operational_track(logical_track_uuid)
+    resolved = resolve_operational_track(logical_track_uuid, from_utc, to_utc)
     plan = build_operational_plan(logical_track_uuid, from_utc, to_utc)
     start = parse_utc(plan["from_utc"])
     end = parse_utc(plan["to_utc"])
@@ -227,6 +455,10 @@ def render_operational_wav(logical_track_uuid: str, from_utc: str | None = None,
     total_bytes = int(round(total_ms * BYTES_PER_MS))
     if total_bytes % 2:
         total_bytes += 1
+
+    if resolved.get("open"):
+        pcm = _decode_growing_window(resolved, start, end)
+        return plan, _wav_bytes(pcm)
 
     cache_key = hashlib.sha256(
         (str(resolved["mxf"]) + "|" + str(resolved["track"].get("track_index", 0))
