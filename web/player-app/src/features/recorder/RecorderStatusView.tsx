@@ -65,8 +65,9 @@ type RecorderStatusPayload = {
     }
     settings: {
       telephone: {
-        received_tracks_mode: 'one_per_cwp_per_phone'
+        received_slots_per_phone: number
         calling_slots_per_phone: number
+        party_identity_source: 'sip_dialog'
       }
       rotation_minutes: number
       topology_change_guard_seconds: number
@@ -75,10 +76,9 @@ type RecorderStatusPayload = {
   }
   telephone_capacity: {
     registered_phones: number
-    registered_cwps: number
-    received_tracks_per_phone: number
-    received_tracks_mode: 'one_per_cwp_per_phone'
+    received_slots_per_phone: number
     calling_slots_per_phone: number
+    party_identity_source: 'sip_dialog'
     tracks_per_phone: number
     total_track_capacity: number
   }
@@ -116,7 +116,7 @@ function statusLabel(status: RecorderStatusPayload['runtime_status']) {
 const FILE_META = {
   cwp: { title: 'CWP', detail: 'Uma trilha por CWP', icon: Server },
   radio: { title: 'Rádios', detail: 'Uma trilha por frequência ativa', icon: Radio },
-  telephone: { title: 'Telefones', detail: 'Received por CWP + calling configurável', icon: Phone },
+  telephone: { title: 'Telefones', detail: 'Pools received/calling + identidade SIP', icon: Phone },
 } as const
 
 export function RecorderStatusView() {
@@ -126,6 +126,7 @@ export function RecorderStatusView() {
   const [saving, setSaving] = useState(false)
   const [system, setSystem] = useState<SystemStatusPayload | null>(null)
   const [serviceAction, setServiceAction] = useState('')
+  const [receivedSlots, setReceivedSlots] = useState(5)
   const [callingSlots, setCallingSlots] = useState(4)
   const [rotationMinutes, setRotationMinutes] = useState(60)
   const [topologyGuardSeconds, setTopologyGuardSeconds] = useState(5)
@@ -142,6 +143,7 @@ export function RecorderStatusView() {
       ])
       setData(next)
       setSystem(systemStatus)
+      setReceivedSlots(next.recording_layout.settings.telephone.received_slots_per_phone)
       setCallingSlots(next.recording_layout.settings.telephone.calling_slots_per_phone)
       setRotationMinutes(next.recording_layout.settings.rotation_minutes)
       setTopologyGuardSeconds(next.recording_layout.settings.topology_change_guard_seconds)
@@ -168,6 +170,7 @@ export function RecorderStatusView() {
         headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
         body: JSON.stringify({
           telephone: {
+            received_slots_per_phone: receivedSlots,
             calling_slots_per_phone: callingSlots,
           },
           rotation_minutes: rotationMinutes,
@@ -435,8 +438,8 @@ export function RecorderStatusView() {
       <div className="recorder-phone-config">
         <label>
           Received por telefone
-          <input type="number" value={telephoneCapacity?.received_tracks_per_phone ?? 0} readOnly />
-          <small>Automático: uma trilha para cada CWP cadastrado.</small>
+          <input type="number" min={1} max={128} value={receivedSlots} onChange={event => setReceivedSlots(Number(event.target.value))} />
+          <small>Capacidade simultânea de chamadas recebidas por ramal.</small>
         </label>
         <label>
           Calling por telefone
@@ -455,15 +458,15 @@ export function RecorderStatusView() {
         </label>
         <div className="recorder-phone-capacity-summary">
           <span>Capacidade por telefone</span>
-          <strong>{(telephoneCapacity?.received_tracks_per_phone ?? 0) + callingSlots} trilhas</strong>
-          <small>{telephoneCapacity?.received_tracks_per_phone ?? 0} received + {callingSlots} calling</small>
+          <strong>{receivedSlots + callingSlots} trilhas</strong>
+          <small>{receivedSlots} received + {callingSlots} calling</small>
         </div>
         <button type="button" className="recorder-save-config" onClick={() => void saveSettings()} disabled={saving}>
           <Save size={15} />Salvar configuração
         </button>
       </div>
       <div className="recorder-capacity-note">
-        Received é derivado automaticamente dos CWP cadastrados: cada telefone recebe uma trilha por CWP. Calling usa um pool reutilizável configurável e não é multiplicado por CWP. Inclusão, exclusão ou renomeação de CWP/serviço gera uma nova revisão de topologia e pode antecipar a virada do MXF.
+        Received e calling são pools reutilizáveis de concorrência por ramal. A outra ponta da chamada não precisa ser um CWP: pode ser ramal de mesa, softphone, celular/SIP ou outro terminal. A identidade real de origem/destino vem do diálogo SIP (From, To e Call-ID) e é registrada como metadado da sessão.
       </div>
     </section>
 
