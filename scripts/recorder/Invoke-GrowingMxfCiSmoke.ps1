@@ -86,9 +86,28 @@ $state = [ordered]@{
     started_utc=[DateTime]::UtcNow.ToString('o')
     run_dir=$runDir
     shared_mxf=$true
+    audio_format=[ordered]@{
+        codec='CCITT_ALAW'
+        standard='ITU-T G.711 A-law'
+        rtp_encoding='PCMA'
+        sample_rate_hz=8000
+        bits_per_sample=8
+        channels=1
+        channel_layout='mono'
+        rtp_payload_type=8
+    }
     files=[ordered]@{
         radio=[ordered]@{
-            category='radio';file_id=$fileId;path=$final;partial=$partial;lock=$lock;track_count=3
+            category='radio';file_id=$fileId;path=$final;partial=$partial;lock=$lock;track_count=3;audio_format=[ordered]@{
+        codec='CCITT_ALAW'
+        standard='ITU-T G.711 A-law'
+        rtp_encoding='PCMA'
+        sample_rate_hz=8000
+        bits_per_sample=8
+        channels=1
+        channel_layout='mono'
+        rtp_payload_type=8
+    }
         }
     }
     tracks=$stateTracks
@@ -126,6 +145,16 @@ try {
     [ordered]@{
         schema='audio-system.tone-scenario.v1'
         duration_ms=$MediaMs
+        audio_format=[ordered]@{
+        codec='CCITT_ALAW'
+        standard='ITU-T G.711 A-law'
+        rtp_encoding='PCMA'
+        sample_rate_hz=8000
+        bits_per_sample=8
+        channels=1
+        channel_layout='mono'
+        rtp_payload_type=8
+    }
         seed=48291
         tracks=@(
             [ordered]@{
@@ -173,6 +202,7 @@ try {
             schema='audio-system.tone-track-schedule.v1'
             seed=[int64]$definition.seed
             mode=[string]$definition.mode
+            audio_format=$definition.audio_format
             start_offset_ms=[int]$definition.start_offset_ms
             bursts=@($definition.bursts)
             expected_intervals=@($definition.expected_intervals)
