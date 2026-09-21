@@ -307,8 +307,30 @@ try {
     ) | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
     if (-not $lab) { throw 'mxf-lab.exe was not built.' }
 
-    & $lab inspect $final '--expected-tracks' '3' '--timeout-ms' '15000' '--expected-alaw-8k-mono'
-    if ($LASTEXITCODE -ne 0) { throw 'Final shared MXF structural inspection failed.' }
+    $demuxDebug = Join-Path $runDir 'mxfdemux-debug.log'
+    $previousGstDebug = $env:GST_DEBUG
+    $previousGstDebugFile = $env:GST_DEBUG_FILE
+    $previousGstDebugNoColor = $env:GST_DEBUG_NO_COLOR
+    try {
+        $env:GST_DEBUG = 'mxfdemux:6,mxf:6'
+        $env:GST_DEBUG_FILE = $demuxDebug
+        $env:GST_DEBUG_NO_COLOR = '1'
+        & $lab inspect $final '--expected-tracks' '3' '--timeout-ms' '15000' '--expected-alaw-8k-mono'
+        $inspectExit = $LASTEXITCODE
+    }
+    finally {
+        $env:GST_DEBUG = $previousGstDebug
+        $env:GST_DEBUG_FILE = $previousGstDebugFile
+        $env:GST_DEBUG_NO_COLOR = $previousGstDebugNoColor
+    }
+    if ($inspectExit -ne 0) {
+        if (Test-Path -LiteralPath $demuxDebug) {
+            Write-Host '--- MXFDEMUX DEBUG TAIL ---' -ForegroundColor Yellow
+            Get-Content -LiteralPath $demuxDebug -Tail 160
+            Write-Host '--- END MXFDEMUX DEBUG TAIL ---' -ForegroundColor Yellow
+        }
+        throw 'Final shared MXF structural inspection failed.'
+    }
 
     Write-Host ('GROWING MXF E2E: PASS first_generation={0} second_generation={1} first_ns={2} second_ns={3} final={4}' -f
         $first.commit_generation,$second.commit_generation,$first.committed_position_ns,$second.committed_position_ns,$final) -ForegroundColor Green
