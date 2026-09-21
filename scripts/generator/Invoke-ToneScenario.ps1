@@ -114,6 +114,7 @@ foreach ($definition in @($resolved.tracks)) {
         schema='audio-system.tone-track-schedule.v1'
         seed=[int64]$definition.seed
         mode=[string]$definition.mode
+        audio_format=$definition.audio_format
         start_offset_ms=[int]$definition.start_offset_ms
         bursts=@($definition.bursts)
         expected_intervals=@($definition.expected_intervals)
@@ -192,6 +193,7 @@ $reportPath = Join-Path $executionDir 'tone-scenario-report.json'
     resolved_scenario=$resolvedPath
     recorder_state=(Resolve-Path $RecorderState).Path
     duration_ms=[int]$resolved.duration_ms
+    audio_format=$resolved.audio_format
     seed=[int64]$resolved.seed
     track_count=@($resolved.tracks).Count
     success=($failures -eq 0)
