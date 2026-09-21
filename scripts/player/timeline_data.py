@@ -48,8 +48,8 @@ def _growing_mxf_state(run: Path, track_state: dict) -> dict | None:
         )
         if not allowed:
             return None
-        window_start = parse_utc(str(lock["recording_window_start_utc"]))
-        confirmed_end = window_start + timedelta(microseconds=committed_position_ns / 1000)
+        timeline_origin = parse_utc(str(lock.get("timeline_origin_utc") or lock["recording_window_start_utc"]))
+        confirmed_end = timeline_origin + timedelta(microseconds=committed_position_ns / 1000)
         return {
             "partial": partial,
             "lock": lock_path,
