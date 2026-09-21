@@ -1,4 +1,4 @@
-import { Activity, Cpu, FileAudio, HardDrive, Network, Phone, Radio, RadioTower, RefreshCw, Save, Server } from 'lucide-react'
+import { Activity, Cpu, FileAudio, HardDrive, Network, Phone, Play, Radio, RadioTower, RefreshCw, RotateCcw, Save, Server, Square } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
 type RecordingFileStatus = {
@@ -13,6 +13,29 @@ type RecordingFileStatus = {
   latest_file: string | null
   latest_file_path: string | null
   latest_size_bytes: number | null
+}
+
+
+type SystemServiceStatus = {
+  name: 'api' | 'frontend' | 'recorder' | 'rps' | 'simulator'
+  running: boolean
+  state: string
+  pid: number | null
+  managed: boolean
+  controllable: boolean
+  detail?: {
+    mode?: string
+    status?: string
+    configured_rps?: number
+    proxy_listener_available?: boolean
+    note?: string
+  }
+}
+
+type SystemStatusPayload = {
+  schema: string
+  checked_utc: string
+  services: Record<SystemServiceStatus['name'], SystemServiceStatus>
 }
 
 type RecorderStatusPayload = {
@@ -101,16 +124,24 @@ export function RecorderStatusView() {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [system, setSystem] = useState<SystemStatusPayload | null>(null)
+  const [serviceAction, setServiceAction] = useState('')
   const [callingSlots, setCallingSlots] = useState(4)
   const [rotationMinutes, setRotationMinutes] = useState(60)
   const [topologyGuardSeconds, setTopologyGuardSeconds] = useState(5)
 
   const load = useCallback(async () => {
     try {
-      const next = await responseJson<RecorderStatusPayload>(
-        await fetch('/api/recorder/status', { headers: { Accept: 'application/json' } }),
-      )
+      const [next, systemStatus] = await Promise.all([
+        responseJson<RecorderStatusPayload>(
+          await fetch('/api/recorder/status', { headers: { Accept: 'application/json' } }),
+        ),
+        responseJson<SystemStatusPayload>(
+          await fetch('/api/system/status', { headers: { Accept: 'application/json' } }),
+        ),
+      ])
       setData(next)
+      setSystem(systemStatus)
       setCallingSlots(next.recording_layout.settings.telephone.calling_slots_per_phone)
       setRotationMinutes(next.recording_layout.settings.rotation_minutes)
       setTopologyGuardSeconds(next.recording_layout.settings.topology_change_guard_seconds)
@@ -151,6 +182,26 @@ export function RecorderStatusView() {
     }
   }
 
+  const controlService = async (service: 'recorder' | 'rps' | 'simulator', action: 'start' | 'stop' | 'restart') => {
+    const key = service + ':' + action
+    setServiceAction(key)
+    setError('')
+    try {
+      const payload = await responseJson<{ system: SystemStatusPayload }>(
+        await fetch('/api/system/services/' + service + '/' + action, {
+          method: 'POST',
+          headers: { Accept: 'application/json' },
+        }),
+      )
+      setSystem(payload.system)
+      await load()
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Falha ao controlar serviço.')
+    } finally {
+      setServiceAction('')
+    }
+  }
+
   const lastCheck = useMemo(() => {
     if (!data?.checked_utc) return '—'
     const date = new Date(data.checked_utc)
@@ -170,6 +221,9 @@ export function RecorderStatusView() {
       </div>
       <div className="recorder-header-actions">
         <span className={'recorder-live-state ' + runtimeStatus}><i />{statusLabel(runtimeStatus)}</span>
+        <button type="button" onClick={() => void controlService('recorder', 'start')} disabled={Boolean(system?.services.recorder.running) || Boolean(serviceAction)}><Play size={14} />Iniciar</button>
+        <button type="button" onClick={() => void controlService('recorder', 'stop')} disabled={!system?.services.recorder.running || Boolean(serviceAction)}><Square size={13} />Parar</button>
+        <button type="button" onClick={() => void controlService('recorder', 'restart')} disabled={Boolean(serviceAction)}><RotateCcw size={13} />Reiniciar</button>
         <button type="button" onClick={() => void load()} disabled={loading}><RefreshCw size={14} />Atualizar</button>
       </div>
     </header>
@@ -204,6 +258,39 @@ export function RecorderStatusView() {
         <strong>{telephoneCapacity?.total_track_capacity ?? 0}</strong>
         <small>{telephoneCapacity?.registered_phones ?? 0} telefones cadastrados</small>
       </article>
+    </section>
+
+    <section className="recorder-panel">
+      <header>
+        <div>
+          <Server size={18} />
+          <div><strong>Serviços do sistema</strong><small>Inicialização unificada: API → Frontend → Gravador → RPS → Simulador</small></div>
+        </div>
+      </header>
+      <div className="recorder-service-grid">
+        {(['api', 'frontend', 'recorder', 'rps', 'simulator'] as const).map(name => {
+          const service = system?.services[name]
+          const label = name === 'api' ? 'API' : name === 'frontend' ? 'Frontend' : name === 'recorder' ? 'Gravador' : name === 'rps' ? 'RPS' : 'Simulador'
+          const rpsPending = name === 'rps' && service?.detail?.proxy_listener_available === false
+          return <article className="recorder-service-card" key={name}>
+            <div className="recorder-service-head">
+              <span className={'recorder-service-dot ' + (service?.running ? 'running' : 'stopped')} />
+              <div><strong>{label}</strong><small>{service?.running ? service.state : 'Parado'}</small></div>
+            </div>
+            {rpsPending && <p>Runtime/configuração ativos; listener SIP persistente ainda pendente.</p>}
+            {!rpsPending && <p>{service?.pid ? 'PID ' + service.pid : service?.running ? 'Processo externo detectado' : 'Sem processo ativo'}</p>}
+            {service?.controllable && <div className="recorder-service-actions">
+              <button type="button" title={'Iniciar ' + label} onClick={() => void controlService(name as 'recorder' | 'rps' | 'simulator', 'start')} disabled={service.running || Boolean(serviceAction)}><Play size={13} /></button>
+              <button type="button" title={'Parar ' + label} onClick={() => void controlService(name as 'recorder' | 'rps' | 'simulator', 'stop')} disabled={!service.running || Boolean(serviceAction)}><Square size={12} /></button>
+              <button type="button" title={'Reiniciar ' + label} onClick={() => void controlService(name as 'recorder' | 'rps' | 'simulator', 'restart')} disabled={Boolean(serviceAction)}><RotateCcw size={12} /></button>
+            </div>}
+            {!service?.controllable && <span className="recorder-service-managed">launcher</span>}
+          </article>
+        })}
+      </div>
+      <div className="recorder-capacity-note">
+        API e frontend são serviços-base do launcher. Para subir toda a pilha em ordem use <code>npm run system:start</code>; para encerrar tudo na ordem inversa use <code>npm run system:stop</code>.
+      </div>
     </section>
 
     <section className="recorder-panel">

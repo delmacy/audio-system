@@ -2388,3 +2388,46 @@ button:focus-visible,input:focus-visible,select:focus-visible,[role=slider]:focu
 @media(max-width:700px){
   .recorder-storage-layout,.recorder-phone-config{grid-template-columns:1fr}
 }
+
+
+.recorder-header-actions>button:disabled{opacity:.42;cursor:not-allowed}
+.recorder-service-grid{
+  display:grid;
+  grid-template-columns:repeat(5,minmax(0,1fr));
+  gap:9px;
+  padding:14px;
+}
+.recorder-service-card{
+  position:relative;
+  min-height:118px;
+  display:grid;
+  align-content:start;
+  gap:9px;
+  padding:12px;
+  border:1px solid #dfe7ef;
+  border-radius:9px;
+  background:#fcfdff;
+}
+.recorder-service-head{display:flex;align-items:center;gap:8px}
+.recorder-service-head>div{display:grid;gap:1px}
+.recorder-service-head strong{font-size:10px;color:#304a63}
+.recorder-service-head small{font-size:8px;color:#7d8fa0;text-transform:uppercase}
+.recorder-service-dot{width:8px;height:8px;border-radius:50%;background:#aeb8c2}
+.recorder-service-dot.running{background:#21a260;box-shadow:0 0 0 3px rgba(33,162,96,.09)}
+.recorder-service-card p{min-height:27px;margin:0;color:#8494a4;font-size:7px;line-height:1.4}
+.recorder-service-actions{display:flex;gap:5px;margin-top:auto}
+.recorder-service-actions button{
+  width:28px;height:28px;display:grid;place-items:center;border:1px solid #d7e2eb;border-radius:6px;background:#fff;color:#5d748a
+}
+.recorder-service-actions button:hover:not(:disabled){border-color:#b8d3ec;background:#f2f8fe;color:#176fbc}
+.recorder-service-actions button:disabled{opacity:.35;cursor:not-allowed}
+.recorder-service-managed{
+  width:max-content;margin-top:auto;padding:3px 6px;border-radius:999px;background:#eff4f8;color:#72879a;font-size:7px;font-weight:700;text-transform:uppercase
+}
+.recorder-capacity-note code{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;color:#42617e}
+@media(max-width:1050px){
+  .recorder-service-grid{grid-template-columns:repeat(3,1fr)}
+}
+@media(max-width:700px){
+  .recorder-service-grid{grid-template-columns:1fr}
+}
