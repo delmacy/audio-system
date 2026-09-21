@@ -180,7 +180,7 @@ jobs:
 
           $alaw = Get-Content -Raw -LiteralPath './src/mxf-identity-plugin/buildsrc/mxfalaw.c'
           foreach ($term in @(
-            'structural container padding',
+            'valid G.711 A-law silence (0xD5)',
             'gst_buffer_memset (filler, 0, 0xD5',
             'MEDIA_START/MEDIA_END remains authoritative'
           )) {
