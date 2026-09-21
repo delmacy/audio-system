@@ -1323,6 +1323,9 @@ gst_mxf_mux_handle_buffer (GstMXFMux * mux, GstMXFMuxPad * pad)
       !GST_BUFFER_FLAG_IS_SET (buf, GST_BUFFER_FLAG_DELTA_UNIT) : TRUE;
   GstClockTime pts = buf ? GST_BUFFER_PTS (buf) : GST_CLOCK_TIME_NONE;
   GstClockTime dts = buf ? GST_BUFFER_DTS (buf) : GST_CLOCK_TIME_NONE;
+  GstClockTime source_pts = pts;
+  GstClockTime source_duration =
+      buf ? GST_BUFFER_DURATION (buf) : GST_CLOCK_TIME_NONE;
 
   if (pad->have_complete_edit_unit) {
     GST_DEBUG_OBJECT (pad,
@@ -1331,6 +1334,8 @@ gst_mxf_mux_handle_buffer (GstMXFMux * mux, GstMXFMuxPad * pad)
     if (buf)
       gst_buffer_unref (buf);
     buf = NULL;
+    source_pts = GST_CLOCK_TIME_NONE;
+    source_duration = GST_CLOCK_TIME_NONE;
   } else if (!flush) {
     if (buf)
       gst_buffer_unref (buf);
@@ -1517,11 +1522,19 @@ gst_mxf_mux_handle_buffer (GstMXFMux * mux, GstMXFMuxPad * pad)
    * StorageWriter uses this metadata only to publish a read-safe growing-MXF
    * watermark; it does not alter the MXF bytes.
    */
-  GST_BUFFER_PTS (outbuf) = pad->last_timestamp;
+  if (GST_CLOCK_TIME_IS_VALID (source_pts) &&
+      GST_CLOCK_TIME_IS_VALID (source_duration)) {
+    GST_BUFFER_PTS (outbuf) =
+        gst_segment_to_running_time (&pad->parent.segment, GST_FORMAT_TIME,
+        source_pts);
+    GST_BUFFER_DURATION (outbuf) = source_duration;
+  } else {
+    GST_BUFFER_PTS (outbuf) = pad->last_timestamp;
+    GST_BUFFER_DURATION (outbuf) =
+        gst_util_uint64_scale (GST_SECOND, pad->source_track->edit_rate.d,
+        pad->source_track->edit_rate.n);
+  }
   GST_BUFFER_DTS (outbuf) = GST_CLOCK_TIME_NONE;
-  GST_BUFFER_DURATION (outbuf) =
-      gst_util_uint64_scale (GST_SECOND, pad->source_track->edit_rate.d,
-      pad->source_track->edit_rate.n);
   GST_BUFFER_OFFSET (outbuf) = pad->pos;
   GST_BUFFER_OFFSET_END (outbuf) = pad->pos + 1;
 
