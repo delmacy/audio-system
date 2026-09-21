@@ -1,4 +1,4 @@
-import { CwpFull } from '@/representations/cwp'
+import { CwpListItem, CwpOperation } from '@/representations/cwp'
 import type { CwpConfig, SimulatorMode } from '../model'
 
 export function CwpList({ cwps, mode, expanded, setExpanded }: {
@@ -8,16 +8,20 @@ export function CwpList({ cwps, mode, expanded, setExpanded }: {
   setExpanded: (next: string[]) => void
 }) {
   return <div className="cwp-list">
-    {cwps.map(cwp => <CwpFull
-      key={cwp.id}
-      cwp={cwp}
-      mode={mode}
-      expanded={expanded.includes(cwp.id)}
-      onToggle={() => setExpanded(
-        expanded.includes(cwp.id)
-          ? expanded.filter(id => id !== cwp.id)
-          : [...expanded, cwp.id],
-      )}
-    />)}
+    {cwps.map(cwp => {
+      const isExpanded = expanded.includes(cwp.id)
+      return <div key={cwp.id} className="cwp-list-entry">
+        <CwpListItem
+          cwp={cwp}
+          mode={mode}
+          onClick={() => setExpanded(
+            isExpanded
+              ? expanded.filter(id => id !== cwp.id)
+              : [...expanded, cwp.id],
+          )}
+        />
+        {isExpanded && <CwpOperation cwp={cwp} mode={mode} />}
+      </div>
+    })}
   </div>
 }
