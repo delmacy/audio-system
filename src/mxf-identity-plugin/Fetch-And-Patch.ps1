@@ -232,9 +232,81 @@ $new = @'
 '@
 $mux = Replace-Exact $mux $old $new 'material-track-name'
 
+# 5) Preserve source timing on each complete essence KLV for growing-MXF
+# watermark publication. These GstBuffer timestamps are downstream-only
+# metadata; they do not change the serialized MXF bytes.
+$old = @'
+  GstClockTime pts = buf ? GST_BUFFER_PTS (buf) : GST_CLOCK_TIME_NONE;
+  GstClockTime dts = buf ? GST_BUFFER_DTS (buf) : GST_CLOCK_TIME_NONE;
+
+  if (pad->have_complete_edit_unit) {
+'@
+$new = @'
+  GstClockTime pts = buf ? GST_BUFFER_PTS (buf) : GST_CLOCK_TIME_NONE;
+  GstClockTime dts = buf ? GST_BUFFER_DTS (buf) : GST_CLOCK_TIME_NONE;
+  GstClockTime source_pts = pts;
+  GstClockTime source_duration =
+      buf ? GST_BUFFER_DURATION (buf) : GST_CLOCK_TIME_NONE;
+
+  if (pad->have_complete_edit_unit) {
+'@
+$mux = Replace-Exact $mux $old $new 'growing-mxf-source-timing-vars'
+
+$old = @'
+    if (buf)
+      gst_buffer_unref (buf);
+    buf = NULL;
+  } else if (!flush) {
+'@
+$new = @'
+    if (buf)
+      gst_buffer_unref (buf);
+    buf = NULL;
+    source_pts = GST_CLOCK_TIME_NONE;
+    source_duration = GST_CLOCK_TIME_NONE;
+  } else if (!flush) {
+'@
+$mux = Replace-Exact $mux $old $new 'growing-mxf-source-timing-reset'
+
+$old = @'
+  gst_buffer_unmap (outbuf, &map);
+  outbuf = gst_buffer_append (outbuf, buf);
+
+  GST_DEBUG_OBJECT (pad,
+'@
+$new = @'
+  gst_buffer_unmap (outbuf, &map);
+  outbuf = gst_buffer_append (outbuf, buf);
+
+  /*
+   * Recorder extension: annotate every complete essence KLV with the source
+   * time span that caused it to be emitted. The downstream StorageWriter uses
+   * this metadata only to publish a read-safe growing-MXF watermark; it does
+   * not alter the MXF bytes.
+   */
+  if (GST_CLOCK_TIME_IS_VALID (source_pts) &&
+      GST_CLOCK_TIME_IS_VALID (source_duration)) {
+    GST_BUFFER_PTS (outbuf) =
+        gst_segment_to_running_time (&pad->parent.segment, GST_FORMAT_TIME,
+        source_pts);
+    GST_BUFFER_DURATION (outbuf) = source_duration;
+  } else {
+    GST_BUFFER_PTS (outbuf) = pad->last_timestamp;
+    GST_BUFFER_DURATION (outbuf) =
+        gst_util_uint64_scale (GST_SECOND, pad->source_track->edit_rate.d,
+        pad->source_track->edit_rate.n);
+  }
+  GST_BUFFER_DTS (outbuf) = GST_CLOCK_TIME_NONE;
+  GST_BUFFER_OFFSET (outbuf) = pad->pos;
+  GST_BUFFER_OFFSET_END (outbuf) = pad->pos + 1;
+
+  GST_DEBUG_OBJECT (pad,
+'@
+$mux = Replace-Exact $mux $old $new 'growing-mxf-klv-watermark-metadata'
+
 Set-Content -Encoding UTF8 -LiteralPath $muxPath -Value $mux
 
-# 5) Isolate plugin registration: only patched muxer is exposed; stock mxfdemux remains official.
+# 6) Isolate plugin registration: only patched muxer is exposed; stock mxfdemux remains official.
 $pluginPath = Join-Path $BuildSrc 'mxf.c'
 $pc = Get-Content -Raw -LiteralPath $pluginPath
 $old = @'
@@ -260,8 +332,9 @@ $marker = Join-Path $BuildSrc 'PATCHED-2.0.14.txt'
 @"
 Upstream: GStreamer $Tag / subprojects/gst-plugins-bad/gst/mxf
 Factory: mxfidmux
-Patch: per-request-pad track-name, logical-track-uuid, track-instance-uuid
+Patch: per-request-pad identity + downstream complete-KLV source timing metadata
 Serialization: MXF Track Name only; structural IDs are not overloaded.
+Growing playback: GstBuffer timing metadata is downstream-only and does not alter MXF bytes.
 "@ | Set-Content -Encoding UTF8 -LiteralPath $marker
 
 Write-Host "Prepared patched source: $BuildSrc"
