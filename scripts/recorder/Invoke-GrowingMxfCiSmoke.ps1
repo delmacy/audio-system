@@ -116,10 +116,53 @@ try {
         Start-Sleep -Milliseconds 100
     }
 
+    $scenarioPath = Join-Path $runDir 'ci-tone-scenario.json'
+    $resolvedScenarioPath = Join-Path $runDir 'ci-tone-scenario-resolved.json'
+    [ordered]@{
+        schema='audio-system.tone-scenario.v1'
+        duration_ms=$MediaMs
+        seed=48291
+        tracks=@(
+            [ordered]@{
+                logical_track_uuid=$tracks[0].logical
+                mode='continuous'
+                frequency_hz=440
+                level_dbfs=-12
+            },
+            [ordered]@{
+                logical_track_uuid=$tracks[1].logical
+                mode='random_pulsed'
+                frequency_hz=660
+                level_dbfs=-12
+                random_start=[ordered]@{min_ms=0;max_ms=200}
+                random_on=[ordered]@{min_ms=800;max_ms=1200}
+                random_off=[ordered]@{min_ms=100;max_ms=300}
+            }
+        )
+    } | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $scenarioPath -Encoding utf8
+
+    $planner = Join-Path $root 'scripts\generator\audio_scenario.py'
+    & python $planner '--scenario' $scenarioPath '--output' $resolvedScenarioPath | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'CI tone scenario resolution failed.' }
+    $resolvedScenario = Get-Content -LiteralPath $resolvedScenarioPath -Raw | ConvertFrom-Json
+
     $simulator = Join-Path $root 'scripts\cwp\Invoke-ServiceMonoSessionSimulator.ps1'
     $powershell = (Get-Command powershell.exe).Source
     $running = @()
     foreach ($track in $tracks) {
+        $definition = @($resolvedScenario.tracks | Where-Object {
+            [string]$_.logical_track_uuid -eq [string]$track.logical
+        }) | Select-Object -First 1
+        if (-not $definition) { throw "Resolved tone schedule missing for track $($track.track_index)." }
+        $schedulePath = Join-Path $runDir ('schedule-' + $track.track_index + '.json')
+        [ordered]@{
+            schema='audio-system.tone-track-schedule.v1'
+            seed=[int64]$definition.seed
+            mode=[string]$definition.mode
+            start_offset_ms=[int]$definition.start_offset_ms
+            bursts=@($definition.bursts)
+            expected_intervals=@($definition.expected_intervals)
+        } | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $schedulePath -Encoding utf8
         $simOut = Join-Path $runDir ('sim-' + $track.track_index + '-stdout.txt')
         $simErr = Join-Path $runDir ('sim-' + $track.track_index + '-stderr.txt')
         $simArgs = @(
@@ -133,13 +176,12 @@ try {
             '-ServiceId',$track.service,
             '-ServiceType','radio',
             '-MediaFlow','mono',
-            '-BurstCount','1',
-            '-BurstMs',[string]$MediaMs,
-            '-SilenceMs','200',
             '-KeepaliveIntervalMs','100',
             '-PausedProbePackets','0',
-            '-ToneHz',[string]$track.tone_hz,
-            '-ToneLevelDbfs','-12'
+            '-ToneHz',[string]$definition.frequency_hz,
+            '-ToneLevelDbfs',[string]$definition.level_dbfs,
+            '-ScheduleFile',$schedulePath,
+            '-RouteKey',$track.route
         )
         $handle = Start-NativeProcessRedirected -FilePath $powershell -Arguments $simArgs -StdOutPath $simOut -StdErrPath $simErr -WorkingDirectory $root
         $running += [pscustomobject]@{ track=$track; handle=$handle }
