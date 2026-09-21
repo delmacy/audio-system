@@ -182,7 +182,8 @@ jobs:
           foreach ($term in @(
             'valid G.711 A-law silence (0xD5)',
             'gst_buffer_memset (filler, 0, 0xD5',
-            'MEDIA_START/MEDIA_END remains authoritative'
+            'MEDIA_START/MEDIA_END remains authoritative',
+            'ret->quantization_bits = 8;'
           )) {
             if (-not $alaw.Contains($term)) {
               throw "Generated mxfalaw.c lost required sparse-track patch marker: $term"
