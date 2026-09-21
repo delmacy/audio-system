@@ -366,6 +366,44 @@ def main() -> None:
         if not {"RPS_RECORDING_OPEN", "RPS_RECORDING_CLOSED"}.issubset(rps_kinds):
             raise RuntimeError(f"RPS audit incomplete for {call_id}: {sorted(rps_kinds)}")
 
+        closed_events = [item for item in rps_events if item.get("event") == "RPS_RECORDING_CLOSED"]
+        if not closed_events:
+            raise RuntimeError(f"RPS did not persist a close evidence record for {call_id}")
+        close_evidence = closed_events[-1]
+        close_legs = list(close_evidence.get("legs") or [])
+
+        # A structural GAP may make an MXF grow, so file growth is never enough
+        # to prove that media was recorded. Every expected leg must have real RTP
+        # packet/byte evidence in addition to recorder MEDIA_START/MEDIA_END.
+        for expected in selected_legs:
+            route_key = str(expected["route_key"])
+            evidence = next(
+                (leg for leg in close_legs if str(leg.get("route_key")) == route_key),
+                None,
+            )
+            if evidence is None:
+                raise RuntimeError(
+                    f"RPS close evidence is missing expected recording leg {route_key}"
+                )
+            packets_forwarded = int(evidence.get("packets") or 0)
+            bytes_forwarded = int(evidence.get("bytes_forwarded") or 0)
+            if packets_forwarded <= 0 or bytes_forwarded <= 0:
+                raise RuntimeError(
+                    f"Recording leg has no real RTP media evidence: route={route_key} "
+                    f"packets={packets_forwarded} bytes={bytes_forwarded}"
+                )
+
+            kinds = {
+                str(item.get("event"))
+                for item in all_recorder_events.get(route_key, [])
+            }
+            required_media = {"RTP_ROUTE_ACTIVE", "MEDIA_START", "MEDIA_END"}
+            if not required_media.issubset(kinds):
+                raise RuntimeError(
+                    f"Recorder media evidence incomplete for {route_key}: "
+                    f"required={sorted(required_media)} seen={sorted(kinds)}"
+                )
+
         print("RPS TELEPHONE E2E: PASS")
         print(
             f"  caller={caller_service['label'] if caller_service else remote_user} "
@@ -375,10 +413,15 @@ def main() -> None:
         for leg in selected_legs:
             route_key = str(leg["route_key"])
             kinds = {str(item.get("event")) for item in all_recorder_events[route_key]}
+            evidence = next(
+                item for item in close_legs if str(item.get("route_key")) == route_key
+            )
             print(
                 f"  leg direction={leg.get('direction')} service={leg.get('service_id')} "
                 f"slot={leg.get('slot_index')} track_index={leg.get('track_index')} "
-                f"route={route_key} events={','.join(sorted(kinds))}"
+                f"route={route_key} packets={int(evidence.get('packets') or 0)} "
+                f"bytes={int(evidence.get('bytes_forwarded') or 0)} "
+                f"events={','.join(sorted(kinds))}"
             )
         print(f"  rtp_packets_sent={packets} duration_seconds={packets * 0.020:.2f}")
         print(f"  mxf_partial={partial_mxf}")
