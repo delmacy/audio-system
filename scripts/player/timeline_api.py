@@ -8,6 +8,7 @@ from urllib.parse import parse_qs, urlparse
 
 from playback_data import build_operational_plan, render_operational_wav
 from timeline_data import build_timeline
+from recorder_status import build_recorder_status
 from config_store import configuration_snapshot, create_cwp, create_gateway, create_service, delete_cwp, delete_gateway, delete_service, get_network_config, list_cwps, list_gateways, list_services, next_cwp_ip, renew_cwp_ips, update_cwp, update_gateway, update_network_config, update_service
 
 HOST = "127.0.0.1"
@@ -67,6 +68,7 @@ class Handler(BaseHTTPRequestHandler):
                     "/api/network/next-ip",
                     "/api/network/config",
                     "/api/network/renew-ips",
+                    "/api/recorder/status",
                     "/api/playback/plan?lt=<uuid>&from=<utc>&to=<utc>",
                     "/api/playback/audio?lt=<uuid>&from=<utc>&to=<utc>",
                 ],
@@ -117,6 +119,13 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(200, {"network": get_network_config()})
             except Exception as exc:
                 self._json(500, {"error": "network_config_failed", "detail": str(exc)})
+            return
+
+        if parsed.path == "/api/recorder/status":
+            try:
+                self._json(200, build_recorder_status())
+            except Exception as exc:
+                self._json(500, {"error": "recorder_status_failed", "detail": str(exc)})
             return
 
         if parsed.path == "/api/timeline":
