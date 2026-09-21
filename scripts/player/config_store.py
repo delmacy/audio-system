@@ -192,6 +192,95 @@ def _setting(con: sqlite3.Connection, key: str) -> str:
     return str(row["value"])
 
 
+def get_network_config() -> dict:
+    initialize()
+    with connect() as con:
+        network = _setting(con, "cwp_pool_network")
+        start = _setting(con, "cwp_pool_start")
+        end = _setting(con, "cwp_pool_end")
+    return {
+        "network": network,
+        "start": start,
+        "end": end,
+        "allocation": "first_free_ascending",
+    }
+
+
+def update_network_config(network: str, start: str, end: str) -> dict:
+    initialize()
+    try:
+        parsed_network = ipaddress.ip_network(network.strip(), strict=False)
+    except ValueError as exc:
+        raise ValueError("Invalid CWP network/CIDR") from exc
+    if parsed_network.version != 4:
+        raise ValueError("CWP network must be IPv4")
+
+    start_ip = ipaddress.ip_address(start.strip())
+    end_ip = ipaddress.ip_address(end.strip())
+    if start_ip.version != 4 or end_ip.version != 4:
+        raise ValueError("CWP pool must use IPv4")
+    if start_ip not in parsed_network or end_ip not in parsed_network:
+        raise ValueError("Pool start/end must belong to the configured CWP network")
+    if int(end_ip) < int(start_ip):
+        raise ValueError("Pool end must be greater than or equal to pool start")
+
+    usable = int(end_ip) - int(start_ip) + 1
+    with connect() as con:
+        count = int(con.execute("SELECT COUNT(*) FROM cwp").fetchone()[0])
+        if usable < count:
+            raise ValueError(f"CWP pool has {usable} addresses but {count} CWP are registered")
+        con.execute("UPDATE system_setting SET value=? WHERE key='cwp_pool_network'", (str(parsed_network),))
+        con.execute("UPDATE system_setting SET value=? WHERE key='cwp_pool_start'", (str(start_ip),))
+        con.execute("UPDATE system_setting SET value=? WHERE key='cwp_pool_end'", (str(end_ip),))
+    return get_network_config()
+
+
+def renew_cwp_ips() -> dict:
+    initialize()
+    config = get_network_config()
+    network = ipaddress.ip_network(config["network"], strict=False)
+    start = ipaddress.ip_address(config["start"])
+    end = ipaddress.ip_address(config["end"])
+    addresses = [str(ipaddress.ip_address(value)) for value in range(int(start), int(end) + 1)]
+    addresses = [value for value in addresses if ipaddress.ip_address(value) in network]
+
+    with connect() as con:
+        rows = con.execute(
+            "SELECT id,label,side,created_at FROM cwp ORDER BY created_at,label"
+        ).fetchall()
+        if len(addresses) < len(rows):
+            raise ValueError(
+                f"CWP pool has {len(addresses)} addresses but {len(rows)} CWP are registered"
+            )
+
+        now = utc_now()
+        # Two-phase update avoids UNIQUE(ip) collisions while the transaction is open.
+        for row in rows:
+            con.execute(
+                "UPDATE cwp SET ip=?,updated_at=? WHERE id=?",
+                (f"__renew__:{row['id']}", now, str(row["id"])),
+            )
+
+        assignments = []
+        for row, assigned_ip in zip(rows, addresses):
+            con.execute(
+                "UPDATE cwp SET ip=?,ip_source='auto',updated_at=? WHERE id=?",
+                (assigned_ip, now, str(row["id"])),
+            )
+            assignments.append({
+                "id": str(row["id"]),
+                "label": str(row["label"]),
+                "side": str(row["side"]),
+                "ip": assigned_ip,
+            })
+
+    return {
+        "network": config,
+        "count": len(assignments),
+        "assignments": assignments,
+    }
+
+
 def next_cwp_ip() -> str:
     initialize()
     with connect() as con:
@@ -529,8 +618,7 @@ def configuration_snapshot() -> dict:
     return {
         "schema": "audio-system.configuration.v2",
         "database": str(DB_PATH),
-        "network": {
-            "allocation": "first_free_ascending",
+        "network": get_network_config() | {
             "next_cwp_ip": next_cwp_ip(),
         },
         "cwps": list_cwps(),
