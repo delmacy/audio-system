@@ -9,7 +9,7 @@ from playback_data import (
     EDIT_UNIT_NS,
     SAMPLE_RATE,
     SAMPLES_PER_EDIT_UNIT,
-    _decode_growing_window,
+    _decode_growing_pcm,
 )
 
 
@@ -32,7 +32,7 @@ def essence_key(track_ordinal: int) -> bytes:
 
 
 class GrowingMxfPlaybackTests(unittest.TestCase):
-    def test_reads_only_selected_track_and_preserves_gap_edit_unit(self) -> None:
+    def test_reads_only_selected_track_and_ignores_structural_gap_payload(self) -> None:
         track1_audio = bytes([0xD5]) * SAMPLES_PER_EDIT_UNIT
         track2_audio = bytes([0x55]) * SAMPLES_PER_EDIT_UNIT
         stream = b"".join([
@@ -41,6 +41,7 @@ class GrowingMxfPlaybackTests(unittest.TestCase):
             klv(essence_key(2), track2_audio),
             klv(essence_key(1), b""),
             klv(essence_key(2), track2_audio),
+            klv(essence_key(1), track1_audio),
         ])
 
         with tempfile.TemporaryDirectory() as directory:
@@ -49,26 +50,26 @@ class GrowingMxfPlaybackTests(unittest.TestCase):
             window_start = datetime(2026, 9, 21, 12, 0, 0, tzinfo=timezone.utc)
             resolved = {
                 "mxf": path,
-                "window_start_utc": window_start.isoformat().replace("+00:00", "Z"),
-                "committed_position_ns": 2 * EDIT_UNIT_NS,
                 "flushed_bytes": len(stream),
                 "track": {"track_index": 0},
+                "intervals": [
+                    {
+                        "start_utc": window_start.isoformat().replace("+00:00", "Z"),
+                        "end_utc": (window_start + timedelta(milliseconds=100)).isoformat().replace("+00:00", "Z"),
+                    },
+                    {
+                        "start_utc": (window_start + timedelta(seconds=1)).isoformat().replace("+00:00", "Z"),
+                        "end_utc": (window_start + timedelta(seconds=1, milliseconds=100)).isoformat().replace("+00:00", "Z"),
+                    },
+                ],
             }
 
-            pcm = _decode_growing_window(
-                resolved,
-                window_start,
-                window_start + timedelta(milliseconds=200),
-            )
+            pcm = _decode_growing_pcm(resolved)
 
-        samples = len(pcm) // 2
-        self.assertEqual(samples, SAMPLE_RATE // 5)
-        first_unit = pcm[: SAMPLES_PER_EDIT_UNIT * 2]
-        second_unit = pcm[SAMPLES_PER_EDIT_UNIT * 2 :]
-        self.assertNotEqual(first_unit, b"\x00" * len(first_unit))
-        self.assertEqual(second_unit, b"\x00" * len(second_unit))
+        self.assertEqual(len(pcm) // 2, 2 * SAMPLES_PER_EDIT_UNIT)
+        self.assertNotEqual(pcm, b"\x00" * len(pcm))
 
-    def test_never_decodes_beyond_committed_position(self) -> None:
+    def test_stops_after_media_duration_confirmed_by_audit(self) -> None:
         audio = bytes([0xD5]) * SAMPLES_PER_EDIT_UNIT
         stream = b"".join([
             klv(essence_key(1), audio),
@@ -82,21 +83,18 @@ class GrowingMxfPlaybackTests(unittest.TestCase):
             window_start = datetime(2026, 9, 21, 12, 0, 0, tzinfo=timezone.utc)
             resolved = {
                 "mxf": path,
-                "window_start_utc": window_start.isoformat().replace("+00:00", "Z"),
-                "committed_position_ns": 2 * EDIT_UNIT_NS,
                 "flushed_bytes": len(stream),
                 "track": {"track_index": 0},
+                "intervals": [{
+                    "start_utc": window_start.isoformat().replace("+00:00", "Z"),
+                    "end_utc": (window_start + timedelta(milliseconds=200)).isoformat().replace("+00:00", "Z"),
+                }],
             }
 
-            pcm = _decode_growing_window(
-                resolved,
-                window_start,
-                window_start + timedelta(milliseconds=300),
-            )
+            pcm = _decode_growing_pcm(resolved)
 
-        committed_bytes = 2 * SAMPLES_PER_EDIT_UNIT * 2
-        self.assertNotEqual(pcm[:committed_bytes], b"\x00" * committed_bytes)
-        self.assertEqual(pcm[committed_bytes:], b"\x00" * (len(pcm) - committed_bytes))
+        self.assertEqual(len(pcm) // 2, SAMPLE_RATE // 5)
+        self.assertNotEqual(pcm, b"\x00" * len(pcm))
 
 
 if __name__ == "__main__":
