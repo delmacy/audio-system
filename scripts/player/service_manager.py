@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import configparser
 import ctypes
 import json
 import os
@@ -26,6 +27,8 @@ PORTS = {
     "api": ("127.0.0.1", 8500),
     "frontend": ("127.0.0.1", 5173),
 }
+
+PROFILE_PATH = ROOT / "config" / "profiles" / "local-poc.ini"
 
 
 def _utc_now() -> str:
@@ -97,6 +100,173 @@ def _port_open(host: str, port: int, timeout: float = 0.15) -> bool:
         return False
 
 
+
+def _profile_ports() -> dict[str, tuple[str, int, str]]:
+    result: dict[str, tuple[str, int, str]] = {}
+    if not PROFILE_PATH.is_file():
+        return result
+    parser = configparser.ConfigParser()
+    try:
+        parser.read(PROFILE_PATH, encoding="utf-8")
+        recorder_ip = parser.get("recorder", "ip", fallback="").strip()
+        recorder_port = parser.getint("recorder", "rtsp_port", fallback=0)
+        if recorder_ip and recorder_port:
+            result["recorder"] = (recorder_ip, recorder_port, "tcp")
+
+        proxy_ip = parser.get("sip", "proxy_ip", fallback="").strip()
+        proxy_port = parser.getint("sip", "proxy_port", fallback=0)
+        if proxy_ip and proxy_port:
+            # SIP may use TCP or UDP. Cleanup checks both transports.
+            result["rps"] = (proxy_ip, proxy_port, "both")
+    except (OSError, configparser.Error, ValueError):
+        pass
+    return result
+
+
+def _service_endpoints(name: str) -> list[tuple[str, int, str]]:
+    endpoints: list[tuple[str, int, str]] = []
+    if name in PORTS:
+        host, port = PORTS[name]
+        endpoints.append((host, port, "tcp"))
+    configured = _profile_ports().get(name)
+    if configured:
+        endpoints.append(configured)
+    return endpoints
+
+
+def _windows_port_owner_pids(port: int, protocol: str = "tcp") -> set[int]:
+    if os.name != "nt":
+        return set()
+
+    queries: list[str] = []
+    if protocol in {"tcp", "both"}:
+        queries.append(
+            f"Get-NetTCPConnection -LocalPort {int(port)} -ErrorAction SilentlyContinue "
+            "| Select-Object -ExpandProperty OwningProcess"
+        )
+    if protocol in {"udp", "both"}:
+        queries.append(
+            f"Get-NetUDPEndpoint -LocalPort {int(port)} -ErrorAction SilentlyContinue "
+            "| Select-Object -ExpandProperty OwningProcess"
+        )
+
+    pids: set[int] = set()
+    for query in queries:
+        completed = subprocess.run(
+            ["powershell.exe", "-NoProfile", "-Command", query],
+            capture_output=True,
+            text=True,
+            check=False,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        for line in completed.stdout.splitlines():
+            line = line.strip()
+            if line.isdigit():
+                pid = int(line)
+                if pid > 0:
+                    pids.add(pid)
+    return pids
+
+
+def _windows_process_pids_by_name(process_name: str) -> set[int]:
+    if os.name != "nt":
+        return set()
+    command = (
+        f"Get-Process -Name '{process_name}' -ErrorAction SilentlyContinue "
+        "| Select-Object -ExpandProperty Id"
+    )
+    completed = subprocess.run(
+        ["powershell.exe", "-NoProfile", "-Command", command],
+        capture_output=True,
+        text=True,
+        check=False,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+    result: set[int] = set()
+    for line in completed.stdout.splitlines():
+        line = line.strip()
+        if line.isdigit():
+            result.add(int(line))
+    return result
+
+
+def _port_is_free(host: str, port: int, protocol: str) -> bool:
+    if os.name == "nt":
+        return not _windows_port_owner_pids(port, protocol)
+    if protocol == "tcp":
+        return not _port_open(host, port)
+    return True
+
+
+def _wait_endpoints_free(name: str, timeout_seconds: float = 8.0) -> bool:
+    endpoints = _service_endpoints(name)
+    if not endpoints:
+        return True
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        if all(_port_is_free(host, port, protocol) for host, port, protocol in endpoints):
+            return True
+        time.sleep(0.15)
+    return all(_port_is_free(host, port, protocol) for host, port, protocol in endpoints)
+
+
+def _cleanup_service_before_start(name: str) -> dict[str, Any]:
+    """Terminate stale instances/port owners for one Audio System service."""
+    registry = _load_registry()
+    current = registry["services"].get(name, {})
+    candidates: set[int] = set()
+
+    registered_pid = int(current.get("pid") or 0)
+    if registered_pid > 0:
+        candidates.add(registered_pid)
+
+    if name == "recorder":
+        recorder_pid = _current_recorder_pid()
+        if recorder_pid:
+            candidates.add(recorder_pid)
+        # recorder-host.exe belongs to this project's native recorder runtime.
+        candidates.update(_windows_process_pids_by_name("recorder-host"))
+
+    for _host, port, protocol in _service_endpoints(name):
+        candidates.update(_windows_port_owner_pids(port, protocol))
+
+    current_pid = os.getpid()
+    killed: list[int] = []
+    for pid in sorted(candidates):
+        if pid <= 0 or pid == current_pid:
+            continue
+        if _pid_alive(pid):
+            _kill_tree(pid)
+            killed.append(pid)
+
+    for pid in killed:
+        for _ in range(40):
+            if not _pid_alive(pid):
+                break
+            time.sleep(0.1)
+
+    if not _wait_endpoints_free(name):
+        occupied = [
+            f"{host}:{port}/{protocol}"
+            for host, port, protocol in _service_endpoints(name)
+            if not _port_is_free(host, port, protocol)
+        ]
+        raise RuntimeError(
+            f"Could not release required endpoints for {name}: {', '.join(occupied)}"
+        )
+
+    registry = _load_registry()
+    registry["services"][name] = {
+        **registry["services"].get(name, {}),
+        "pid": None,
+        "state": "stopped",
+        "preflight_killed_pids": killed,
+        "preflight_utc": _utc_now(),
+    }
+    _save_registry(registry)
+    return {"service": name, "killed_pids": killed}
+
+
 def _service_command(name: str) -> tuple[list[str], Path]:
     if name == "api":
         return [sys.executable, str(ROOT / "scripts" / "player" / "timeline_api.py")], ROOT
@@ -141,9 +311,13 @@ def _external_running(name: str) -> bool:
     return bool(endpoint and _port_open(*endpoint))
 
 
-def start_service(name: str) -> dict:
+def start_service(name: str, clean_start: bool = True) -> dict:
     if name not in SERVICE_ORDER:
         raise ValueError(f"Unknown service: {name}")
+
+    if clean_start:
+        _cleanup_service_before_start(name)
+
     if name == "recorder":
         stop_signal = ROOT / "runs" / "operational-recorder" / "stop.signal"
         try:
@@ -160,7 +334,7 @@ def start_service(name: str) -> dict:
         return service_status(name)
 
     recorder_pid = _current_recorder_pid() if name == "recorder" else None
-    if recorder_pid:
+    if recorder_pid and not clean_start:
         services[name] = {
             "pid": recorder_pid,
             "managed": False,
@@ -170,7 +344,7 @@ def start_service(name: str) -> dict:
         _save_registry(registry)
         return service_status(name)
 
-    if name in PORTS and _external_running(name):
+    if name in PORTS and _external_running(name) and not clean_start:
         services[name] = {
             "pid": None,
             "managed": False,
@@ -266,7 +440,7 @@ def stop_service(name: str) -> dict:
 def restart_service(name: str) -> dict:
     stop_service(name)
     time.sleep(0.25)
-    return start_service(name)
+    return start_service(name, clean_start=True)
 
 
 def _rps_detail() -> dict:
@@ -336,7 +510,7 @@ def system_status() -> dict:
 def start_system() -> dict:
     results = {}
     for name in SERVICE_ORDER:
-        results[name] = start_service(name)
+        results[name] = start_service(name, clean_start=True)
         # API/frontend need a short settling window before their dependents.
         time.sleep(0.5 if name in {"api", "frontend"} else 0.2)
     return {"action": "start_system", "results": results, "status": system_status()}
@@ -369,7 +543,7 @@ def main() -> None:
         result = stop_system()
     else:
         if args.action == "start":
-            result = start_service(args.name)
+            result = start_service(args.name, clean_start=True)
         elif args.action == "stop":
             result = stop_service(args.name)
         elif args.action == "restart":
