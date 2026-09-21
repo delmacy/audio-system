@@ -126,14 +126,24 @@ int storage_writer_write_lock_state(StorageWriter *writer, const char *state, ch
             return 0;
         }
     }
-    if (!MoveFileExA(temp_path, writer->lock_path,
-            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
-        DWORD err = GetLastError();
+    {
+        DWORD err = ERROR_SUCCESS;
+        int attempt;
+        for (attempt = 0; attempt < 10; attempt++) {
+            if (MoveFileExA(temp_path, writer->lock_path,
+                    MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
+                return 1;
+            err = GetLastError();
+            if (err != ERROR_SHARING_VIOLATION &&
+                err != ERROR_LOCK_VIOLATION &&
+                err != ERROR_ACCESS_DENIED)
+                break;
+            Sleep(5);
+        }
         DeleteFileA(temp_path);
         set_error(error_text, error_text_size, "Atomic lock sidecar replace failed", err);
         return 0;
     }
-    return 1;
 }
 
 int storage_writer_open(
