@@ -8,7 +8,7 @@ import socket
 from datetime import datetime, timezone
 from pathlib import Path
 
-from config_store import list_cwps, list_services
+from config_store import list_services
 from recording_layout import recording_layout_snapshot
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -151,10 +151,9 @@ def build_recorder_status() -> dict:
     category_files = _category_file_status(layout, state)
     services = list_services()
     telephone_count = sum(1 for service in services if service.get("kind") == "TEL")
-    cwp_count = len(list_cwps())
-    received_tracks_per_phone = cwp_count
+    received_slots = int(layout["settings"]["telephone"]["received_slots_per_phone"])
     calling_slots = int(layout["settings"]["telephone"]["calling_slots_per_phone"])
-    telephone_track_capacity = telephone_count * (received_tracks_per_phone + calling_slots)
+    telephone_track_capacity = telephone_count * (received_slots + calling_slots)
 
     file_exists = bool(mxf and mxf.is_file())
     file_size = mxf.stat().st_size if file_exists and mxf else None
@@ -197,11 +196,10 @@ def build_recorder_status() -> dict:
         },
         "telephone_capacity": {
             "registered_phones": telephone_count,
-            "registered_cwps": cwp_count,
-            "received_tracks_per_phone": received_tracks_per_phone,
-            "received_tracks_mode": "one_per_cwp_per_phone",
+            "received_slots_per_phone": received_slots,
             "calling_slots_per_phone": calling_slots,
-            "tracks_per_phone": received_tracks_per_phone + calling_slots,
+            "party_identity_source": "sip_dialog",
+            "tracks_per_phone": received_slots + calling_slots,
             "total_track_capacity": telephone_track_capacity,
         },
         "metrics": {

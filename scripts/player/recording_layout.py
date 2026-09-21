@@ -18,6 +18,7 @@ ROOT = Path(__file__).resolve().parents[2]
 RECORDINGS_ROOT = ROOT / "recordings"
 
 DEFAULT_RECORDER_SETTINGS = {
+    "telephone_received_slots_per_phone": "5",
     "telephone_calling_slots_per_phone": "4",
     "recording_rotation_minutes": "60",
     "topology_change_guard_seconds": "5",
@@ -43,6 +44,7 @@ def get_recorder_settings() -> dict:
                 """
                 SELECT key,value FROM system_setting
                 WHERE key IN (
+                    'telephone_received_slots_per_phone',
                     'telephone_calling_slots_per_phone',
                     'recording_rotation_minutes',
                     'topology_change_guard_seconds'
@@ -52,8 +54,9 @@ def get_recorder_settings() -> dict:
         }
     return {
         "telephone": {
-            "received_tracks_mode": "one_per_cwp_per_phone",
+            "received_slots_per_phone": int(rows["telephone_received_slots_per_phone"]),
             "calling_slots_per_phone": int(rows["telephone_calling_slots_per_phone"]),
+            "party_identity_source": "sip_dialog",
         },
         "rotation_minutes": int(rows["recording_rotation_minutes"]),
         "topology_change_guard_seconds": int(rows["topology_change_guard_seconds"]),
@@ -62,11 +65,14 @@ def get_recorder_settings() -> dict:
 
 
 def update_recorder_settings(
+    received_slots_per_phone: int,
     calling_slots_per_phone: int,
     rotation_minutes: int,
     topology_change_guard_seconds: int,
 ) -> dict:
     _ensure_settings()
+    if not 1 <= int(received_slots_per_phone) <= 128:
+        raise ValueError("Received slots per phone must be between 1 and 128")
     if not 1 <= int(calling_slots_per_phone) <= 128:
         raise ValueError("Calling slots per phone must be between 1 and 128")
     if not 1 <= int(rotation_minutes) <= 1440:
@@ -77,6 +83,7 @@ def update_recorder_settings(
     old = get_recorder_settings()
     with connect() as con:
         values = {
+            "telephone_received_slots_per_phone": str(int(received_slots_per_phone)),
             "telephone_calling_slots_per_phone": str(int(calling_slots_per_phone)),
             "recording_rotation_minutes": str(int(rotation_minutes)),
             "topology_change_guard_seconds": str(int(topology_change_guard_seconds)),
@@ -85,7 +92,8 @@ def update_recorder_settings(
             con.execute("UPDATE system_setting SET value=? WHERE key=?", (value, key))
 
     if (
-        int(old["telephone"]["calling_slots_per_phone"]) != int(calling_slots_per_phone)
+        int(old["telephone"]["received_slots_per_phone"]) != int(received_slots_per_phone)
+        or int(old["telephone"]["calling_slots_per_phone"]) != int(calling_slots_per_phone)
         or int(old["rotation_minutes"]) != int(rotation_minutes)
     ):
         mark_topology_changed("recorder_topology_settings_updated")

@@ -141,21 +141,20 @@ def build_topology() -> dict:
             activity_signal="squ",
         ))
 
+    received = int(settings["telephone"]["received_slots_per_phone"])
     calling = int(settings["telephone"]["calling_slots_per_phone"])
-    ordered_cwps = sorted(cwps, key=lambda item: (item["side"], item["label"]))
     for service in sorted((item for item in services if item["kind"] == "TEL"), key=lambda item: item["label"]):
         number = _service_number(str(service["label"]))
-        for cwp_index, cwp in enumerate(ordered_cwps, start=1):
-            cwp_label = str(cwp["label"])
+        for slot in range(1, received + 1):
             tracks.append(_track(
                 category="telephone",
                 service_type="telephone",
                 service_id=number,
-                endpoint_id=cwp_label,
-                route_key=f"/record/telephone/{number}/received/{cwp_label}",
+                endpoint_id=str(service["label"]),
+                route_key=f"/record/telephone/{number}/received/{slot:02d}",
                 activity_signal="none",
                 role="received",
-                slot_index=cwp_index,
+                slot_index=slot,
             ))
         for slot in range(1, calling + 1):
             tracks.append(_track(

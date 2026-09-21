@@ -302,6 +302,7 @@ class Handler(BaseHTTPRequestHandler):
             if parsed.path == "/api/recorder/settings":
                 telephone = payload.get("telephone", {})
                 item = update_recorder_settings(
+                    received_slots_per_phone=int(telephone.get("received_slots_per_phone", 5)),
                     calling_slots_per_phone=int(telephone.get("calling_slots_per_phone", 4)),
                     rotation_minutes=int(payload.get("rotation_minutes", 60)),
                     topology_change_guard_seconds=int(payload.get("topology_change_guard_seconds", 5)),
