@@ -1579,6 +1579,38 @@ static int get_header_value(const char *request, const char *header, char *out, 
     return 1;
 }
 
+static void capture_event_metadata(RecorderSession *session, const char *request) {
+    char value[512] = {0};
+    if (!session || !session->host || !session->host->cfg.event_files_mode)
+        return;
+
+    if (get_header_value(request, "X-Interaction-Id", value, sizeof(value)) && value[0])
+        safe_copy(session->interaction_id, sizeof(session->interaction_id), value);
+    if (get_header_value(request, "X-Leg-Id", value, sizeof(value)) && value[0])
+        safe_copy(session->leg_id, sizeof(session->leg_id), value);
+    if (!session->event_file_open &&
+        get_header_value(request, "X-Media-Start-Utc", value, sizeof(value)) &&
+        value[0])
+        safe_copy(session->event_media_start_utc,
+            sizeof(session->event_media_start_utc), value);
+    if (get_header_value(request, "X-Event-Utc", value, sizeof(value)) && value[0])
+        safe_copy(session->event_last_event_utc,
+            sizeof(session->event_last_event_utc), value);
+
+    if (get_header_value(request, "X-Audio-Event", value, sizeof(value)) && value[0]) {
+        if (_stricmp(value, "RING") == 0)
+            safe_copy(session->event_state, sizeof(session->event_state), "RINGING");
+        else if (_stricmp(value, "ANSWER") == 0)
+            safe_copy(session->event_state, sizeof(session->event_state), "IN_CALL");
+        else if (_stricmp(value, "HANGUP") == 0)
+            safe_copy(session->event_state, sizeof(session->event_state), "HANGUP");
+        else if (_stricmp(value, "RADIO_ACTIVATED") == 0)
+            safe_copy(session->event_state, sizeof(session->event_state), "ACTIVE");
+    }
+
+    ensure_event_identity(session);
+}
+
 static int parse_content_length(const char *headers) {
     char v[64];
     if (!get_header_value(headers, "Content-Length", v, sizeof(v))) return 0;
@@ -1685,7 +1717,7 @@ static int handle_rtsp_request(RecorderHost *host, ClientConnection *client, cha
     }
     get_header_value(request, "CSeq", cseq, sizeof(cseq));
     if (_stricmp(method, "OPTIONS") == 0) {
-        snprintf(extra, sizeof(extra), "Public: OPTIONS, ANNOUNCE, SETUP, RECORD, PAUSE, GET_PARAMETER, TEARDOWN\r\n");
+        snprintf(extra, sizeof(extra), "Public: OPTIONS, ANNOUNCE, SETUP, RECORD, PAUSE, GET_PARAMETER, SET_PARAMETER, TEARDOWN\r\n");
         return send_rtsp_response(client->socket, 200, "OK", cseq, session ? session->session_id : NULL, extra);
     }
     if (_stricmp(method, "ANNOUNCE") == 0) {
@@ -1706,6 +1738,8 @@ static int handle_rtsp_request(RecorderHost *host, ClientConnection *client, cha
         client->session = session;
         session->client_index = (int)(client - host->clients);
         session->announced = 1;
+        if (host->cfg.event_files_mode)
+            capture_event_metadata(session, request);
         snprintf(detail, sizeof(detail), "ANNOUNCE route=%s uri=%s service=%s endpoint=%s media_flow=%s rtp_port=%d",
             session->cfg.route_key, uri, session->cfg.service_id, session->cfg.endpoint_id, session->cfg.media_flow, session->cfg.rtp_port);
         audit_event(host, session, "SESSION_OPEN", detail);
@@ -1732,10 +1766,30 @@ static int handle_rtsp_request(RecorderHost *host, ClientConnection *client, cha
     }
     if (_stricmp(method, "RECORD") == 0) {
         if (!session->setup_done) return send_rtsp_response(client->socket, 455, "Method Not Valid in This State", cseq, session->session_id, NULL);
+        if (host->cfg.event_files_mode) {
+            capture_event_metadata(session, request);
+            if (session->event_close_requested) {
+                if (!close_event_file_now(session, "Previous event closed before next RECORD")) {
+                    host->server_failed = 1;
+                    return send_rtsp_response(client->socket, 500, "Internal Server Error", cseq, session->session_id, NULL);
+                }
+            }
+            if (!session->event_file_open && session->event_sequence > 0) {
+                session->event_media_start_utc[0] = 0;
+                session->event_last_event_utc[0] = 0;
+                session->leg_id[0] = 0;
+                ensure_event_identity(session);
+                safe_copy(session->event_state, sizeof(session->event_state),
+                    _stricmp(session->cfg.session_kind, "telephone") == 0 ? "RINGING" : "ACTIVE");
+            }
+        }
         if (!session->recording) {
             session->recording = 1;
             session->record_commands++;
-            audit_event(host, session, "RECORD", "Media gate opened on isolated session route");
+            audit_event(host, session, "RECORD",
+                host->cfg.event_files_mode
+                    ? "Event leg armed; first accepted RTP packet will timestamp and materialize the MXF"
+                    : "Media gate opened on isolated session route");
             audit_activity_signal(session, 1);
         }
         return send_rtsp_response(client->socket, 200, "OK", cseq, session->session_id, NULL);
@@ -1752,11 +1806,61 @@ static int handle_rtsp_request(RecorderHost *host, ClientConnection *client, cha
             }
             audit_activity_signal(session, 0);
             audit_event(host, session, "PAUSE", "Media gate closed without affecting other sessions");
-            if (!maybe_rotate_window_after_pause(session)) {
+            if (host->cfg.event_files_mode) {
+                if (!session->event_last_event_utc[0])
+                    storage_utc_now(session->event_last_event_utc,
+                        sizeof(session->event_last_event_utc));
+                request_event_file_close(session,
+                    "PAUSE ended event recording", session->event_last_event_utc);
+            } else if (!maybe_rotate_window_after_pause(session)) {
                 host->server_failed = 1;
                 audit_event(host, session, "INTEGRITY_FAILURE", "Window rotation failed at PAUSE boundary");
                 return send_rtsp_response(client->socket, 500, "Internal Server Error", cseq, session->session_id, NULL);
             }
+        }
+        return send_rtsp_response(client->socket, 200, "OK", cseq, session->session_id, NULL);
+    }
+    if (_stricmp(method, "SET_PARAMETER") == 0) {
+        char event_name[128] = {0};
+        int i;
+        if (!session->setup_done) return send_rtsp_response(client->socket, 455, "Method Not Valid in This State", cseq, session->session_id, NULL);
+        if (!host->cfg.event_files_mode)
+            return send_rtsp_response(client->socket, 200, "OK", cseq, session->session_id, NULL);
+
+        capture_event_metadata(session, request);
+        get_header_value(request, "X-Audio-Event", event_name, sizeof(event_name));
+        if (!session->event_last_event_utc[0])
+            storage_utc_now(session->event_last_event_utc,
+                sizeof(session->event_last_event_utc));
+
+        if (_stricmp(event_name, "ANSWER") == 0) {
+            session->event_answered = 1;
+            safe_copy(session->event_state, sizeof(session->event_state), "IN_CALL");
+            audit_event(host, session, "ANSWER",
+                "This leg answered; sibling ringing legs for the same interaction will stop accepting media and finalize");
+
+            for (i = 0; i < host->session_count; i++) {
+                RecorderSession *other = &host->sessions[i];
+                if (other == session || !other->interaction_id[0]) continue;
+                if (_stricmp(other->interaction_id, session->interaction_id) != 0) continue;
+                if (!other->event_file_open && !other->recording) continue;
+                safe_copy(other->event_state, sizeof(other->event_state), "RING_NOT_ANSWERED");
+                request_event_file_close(other,
+                    "Sibling leg answered this interaction",
+                    session->event_last_event_utc);
+            }
+        } else if (_stricmp(event_name, "HANGUP") == 0) {
+            safe_copy(session->event_state, sizeof(session->event_state), "HANGUP");
+            request_event_file_close(session, "HANGUP ended event recording",
+                session->event_last_event_utc);
+        } else if (_stricmp(event_name, "RING") == 0) {
+            safe_copy(session->event_state, sizeof(session->event_state), "RINGING");
+            audit_event(host, session, "RING", "Telephone ringing leg signaled");
+        } else if (_stricmp(event_name, "RADIO_ACTIVATED") == 0) {
+            safe_copy(session->event_state, sizeof(session->event_state), "ACTIVE");
+            audit_event(host, session, "RADIO_ACTIVATED", "Radio event leg signaled");
+        } else if (event_name[0]) {
+            audit_event(host, session, "EVENT_SIGNAL", event_name);
         }
         return send_rtsp_response(client->socket, 200, "OK", cseq, session->session_id, NULL);
     }
@@ -1788,6 +1892,13 @@ static int handle_rtsp_request(RecorderHost *host, ClientConnection *client, cha
         send_rtsp_response(client->socket, 200, "OK", cseq, session->session_id, NULL);
         if (session->shared_group) {
             rearm_shared_route(session, "TEARDOWN released reusable shared-MXF route");
+        } else if (host->cfg.event_files_mode) {
+            if (!session->event_last_event_utc[0])
+                storage_utc_now(session->event_last_event_utc,
+                    sizeof(session->event_last_event_utc));
+            request_event_file_close(session,
+                "TEARDOWN ended event leg", session->event_last_event_utc);
+            session->event_rearm_requested = 1;
         } else {
             if (!begin_finalize_session(session, "TEARDOWN finalized only this session route")) host->server_failed = 1;
         }
@@ -2147,6 +2258,18 @@ static int handle_rtp_packet(RecorderSession *session, unsigned char *packet, in
         session->rtp_packets_ignored_not_recording++;
         return 1;
     }
+    if (session->host->cfg.event_files_mode && !session->event_file_open) {
+        if (!session->event_media_start_utc[0])
+            storage_utc_now(session->event_media_start_utc,
+                sizeof(session->event_media_start_utc));
+        if (!open_event_file(session)) {
+            audit_event(session->host, session, "INTEGRITY_FAILURE",
+                "Could not materialize event MXF from first accepted RTP packet");
+            return 0;
+        }
+        audit_event(session->host, session, "MEDIA_INGRESS_ORIGIN",
+            "media_start_utc fixed from first accepted RTP packet; file creation time is non-authoritative");
+    }
     if (!session->media_active) {
         audit_media_boundary(session, "MEDIA_START", "First RTP payload accepted on route after RECORD");
         session->media_active = 1;
@@ -2191,6 +2314,14 @@ static void close_client(RecorderHost *host, int index, int unexpected) {
             audit_event(host, session, "CONNECTION_LOST",
                 "RTSP client disconnected; shared MXF route was rearmed without closing the category writer");
             rearm_shared_route(session, "Unexpected disconnect released reusable shared-MXF route");
+        } else if (host->cfg.event_files_mode) {
+            if (!session->event_last_event_utc[0])
+                storage_utc_now(session->event_last_event_utc,
+                    sizeof(session->event_last_event_utc));
+            request_event_file_close(session,
+                "Unexpected RTSP disconnect ended event leg",
+                session->event_last_event_utc);
+            session->event_rearm_requested = 1;
         } else {
             abort_session(session, "RTSP TCP connection closed without TEARDOWN; route moved to recovery-required state");
             host->server_failed = 1;
@@ -2358,6 +2489,9 @@ static int run_server(RecorderHost *host) {
                 }
             }
         }
+        if (host->cfg.event_files_mode &&
+            !process_event_file_closures(host, 32))
+            return 0;
         if (all_sessions_finalized(host)) host->shutdown_requested = 1;
 
         if (!timeout_finalization_started && shutdown_requested_by_file(host)) {
