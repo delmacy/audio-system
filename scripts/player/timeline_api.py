@@ -158,7 +158,6 @@ class Handler(BaseHTTPRequestHandler):
                 item = create_service(
                     kind=str(payload.get("kind", "")),
                     label=str(payload.get("label", "")),
-                    sip_uri=str(payload.get("sip_uri", "")),
                     gateway_id=str(payload.get("gateway_id")) if payload.get("gateway_id") else None,
                 )
                 self._json(201, {"service": item})
@@ -205,7 +204,6 @@ class Handler(BaseHTTPRequestHandler):
                     record_id=record_id,
                     kind=str(payload.get("kind", "")),
                     label=str(payload.get("label", "")),
-                    sip_uri=str(payload.get("sip_uri", "")),
                     gateway_id=str(payload.get("gateway_id")) if payload.get("gateway_id") else None,
                 )
                 self._json(200, {"service": item})
