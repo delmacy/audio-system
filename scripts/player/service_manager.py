@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import ctypes
 import json
 import os
 import socket
@@ -61,8 +62,28 @@ def _save_registry(payload: dict[str, Any]) -> None:
 def _pid_alive(pid: int | None) -> bool:
     if not pid or pid <= 0:
         return False
+
+    if os.name == "nt":
+        # Avoid os.kill(pid, 0) on Windows/Python 3.13. Some Windows builds can
+        # leave WinError 87 pending even when OSError is caught, which later
+        # surfaces as an unrelated SystemError inside pathlib.
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        open_process = kernel32.OpenProcess
+        open_process.argtypes = [ctypes.c_uint32, ctypes.c_int, ctypes.c_uint32]
+        open_process.restype = ctypes.c_void_p
+        close_handle = kernel32.CloseHandle
+        close_handle.argtypes = [ctypes.c_void_p]
+        close_handle.restype = ctypes.c_int
+
+        handle = open_process(PROCESS_QUERY_LIMITED_INFORMATION, 0, int(pid))
+        if not handle:
+            return False
+        close_handle(handle)
+        return True
+
     try:
-        os.kill(pid, 0)
+        os.kill(int(pid), 0)
         return True
     except OSError:
         return False
@@ -138,9 +159,10 @@ def start_service(name: str) -> dict:
     if _pid_alive(current_pid):
         return service_status(name)
 
-    if name == "recorder" and _current_recorder_pid():
+    recorder_pid = _current_recorder_pid() if name == "recorder" else None
+    if recorder_pid:
         services[name] = {
-            "pid": _current_recorder_pid(),
+            "pid": recorder_pid,
             "managed": False,
             "started_utc": None,
             "state": "running_external",
