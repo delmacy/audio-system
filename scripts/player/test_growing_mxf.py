@@ -103,5 +103,12 @@ class GrowingMxfPlaybackTests(unittest.TestCase):
         self.assertNotEqual(pcm, b"\x00" * len(pcm))
 
 
+
+
+def test_operational_plan_exposes_growing_watermark_fields() -> None:
+    source = (ROOT / "scripts" / "player" / "playback_data.py").read_text(encoding="utf-8")
+    assert '"committed_position_ns": resolved.get("committed_position_ns")' in source
+    assert '"flushed_bytes": resolved.get("flushed_bytes")' in source
+
 if __name__ == "__main__":
     unittest.main()
