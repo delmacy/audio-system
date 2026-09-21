@@ -25,7 +25,8 @@
 #define MAX_SHARED_GROUPS 16
 #define SESSION_MAP_FIELDS 16
 #define LIVE_COMMIT_INTERVAL_MS 1000
-#define LIVE_SAFETY_LAG_NS GST_SECOND
+#define LIVE_SAFETY_LAG_MS 1000
+#define LIVE_SAFETY_LAG_NS ((guint64)LIVE_SAFETY_LAG_MS * GST_MSECOND)
 
 typedef struct RecorderHost RecorderHost;
 typedef struct RecorderSession RecorderSession;
@@ -562,7 +563,7 @@ static int maybe_commit_shared_watermark(
     if (safe_position <= group->confirmed_position_ns) return 1;
 
     if (!storage_writer_commit(&group->writer, safe_position,
-            LIVE_COMMIT_INTERVAL_MS, error_text, error_text_size))
+            LIVE_SAFETY_LAG_MS, error_text, error_text_size))
         return 0;
 
     group->confirmed_position_ns = safe_position;
