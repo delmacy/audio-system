@@ -40,6 +40,11 @@ $tracks = @(
         endpoint='CI-CWP-02'; service='118700'; route='/record/CI-CWP-02/radio-118700';
         rtp=20501; local_rtp=21501; logical=[Guid]::NewGuid().ToString(); instance=[Guid]::NewGuid().ToString();
         track_index=1; tone_hz=660
+    },
+    [ordered]@{
+        endpoint='CI-CWP-03'; service='119900'; route='/record/CI-CWP-03/radio-119900';
+        rtp=20502; local_rtp=21502; logical=[Guid]::NewGuid().ToString(); instance=[Guid]::NewGuid().ToString();
+        track_index=2; tone_hz=880
     }
 )
 
@@ -83,7 +88,7 @@ $state = [ordered]@{
     shared_mxf=$true
     files=[ordered]@{
         radio=[ordered]@{
-            category='radio';file_id=$fileId;path=$final;partial=$partial;lock=$lock;track_count=2
+            category='radio';file_id=$fileId;path=$final;partial=$partial;lock=$lock;track_count=3
         }
     }
     tracks=$stateTracks
@@ -131,12 +136,21 @@ try {
             },
             [ordered]@{
                 logical_track_uuid=$tracks[1].logical
-                mode='random_pulsed'
+                mode='pulsed'
                 frequency_hz=660
                 level_dbfs=-12
-                random_start=[ordered]@{min_ms=0;max_ms=200}
-                random_on=[ordered]@{min_ms=800;max_ms=1200}
-                random_off=[ordered]@{min_ms=100;max_ms=300}
+                start_offset_ms=300
+                on_ms=700
+                off_ms=500
+            },
+            [ordered]@{
+                logical_track_uuid=$tracks[2].logical
+                mode='random_pulsed'
+                frequency_hz=880
+                level_dbfs=-12
+                random_start=[ordered]@{min_ms=0;max_ms=800}
+                random_on=[ordered]@{min_ms=300;max_ms=1200}
+                random_off=[ordered]@{min_ms=200;max_ms=900}
             }
         )
     } | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $scenarioPath -Encoding utf8
@@ -263,7 +277,7 @@ try {
     ) | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
     if (-not $lab) { throw 'mxf-lab.exe was not built.' }
 
-    & $lab inspect $final '--expected-tracks' '2' '--timeout-ms' '15000'
+    & $lab inspect $final '--expected-tracks' '3' '--timeout-ms' '15000'
     if ($LASTEXITCODE -ne 0) { throw 'Final shared MXF structural inspection failed.' }
 
     Write-Host ('GROWING MXF E2E: PASS first_generation={0} second_generation={1} first_ns={2} second_ns={3} final={4}' -f
