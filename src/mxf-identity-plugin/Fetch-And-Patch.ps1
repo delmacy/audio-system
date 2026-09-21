@@ -306,7 +306,67 @@ $mux = Replace-Exact $mux $old $new 'growing-mxf-klv-watermark-metadata'
 
 Set-Content -Encoding UTF8 -LiteralPath $muxPath -Value $mux
 
-# 6) Isolate plugin registration: only patched muxer is exposed; stock mxfdemux remains official.
+# 6) Sparse A-law tracks must remain decodable by stock MXF readers. Convert
+# GStreamer GAP buffers into valid A-law silence bytes before normal edit-unit
+# assembly. The recorder audit remains authoritative for evidence/media
+# intervals, so these bytes are structural container padding only.
+$alawPath = Join-Path $BuildSrc 'mxfalaw.c'
+$alaw = Get-Content -Raw -LiteralPath $alawPath
+$old = @'
+  bytes = speu * md->channels;
+
+  if (buffer)
+    gst_adapter_push (adapter, buffer);
+'@
+$new = @'
+  bytes = speu * md->channels;
+
+  /*
+   * Recorder extension: keep sparse tracks standards-decodable. A GAP is
+   * container padding, not recorded evidence. Encode its elapsed time as
+   * valid G.711 A-law silence (0xD5) and feed it through the normal adapter
+   * so every MXF edit unit keeps the expected fixed audio payload size.
+   *
+   * Audit MEDIA_START/MEDIA_END remains authoritative for deciding which
+   * timeline regions are recorded media; players must never promote this
+   * structural filler to evidence audio.
+   */
+  if (buffer && GST_BUFFER_FLAG_IS_SET (buffer, GST_BUFFER_FLAG_GAP)) {
+    GstClockTime gap_duration = GST_BUFFER_DURATION (buffer);
+    guint64 gap_samples = speu;
+    GstBuffer *filler;
+
+    if (GST_CLOCK_TIME_IS_VALID (gap_duration) && gap_duration > 0)
+      gap_samples = gst_util_uint64_scale_round (gap_duration,
+          (guint64) md->rate, GST_SECOND);
+
+    if (gap_samples == 0)
+      gap_samples = speu;
+
+    filler = gst_buffer_new_allocate (NULL,
+        (gsize) gap_samples * md->channels, NULL);
+    if (!filler) {
+      gst_buffer_unref (buffer);
+      return GST_FLOW_ERROR;
+    }
+
+    gst_buffer_memset (filler, 0, 0xD5,
+        (gsize) gap_samples * md->channels);
+    GST_BUFFER_PTS (filler) = GST_BUFFER_PTS (buffer);
+    GST_BUFFER_DTS (filler) = GST_BUFFER_DTS (buffer);
+    GST_BUFFER_DURATION (filler) = gap_duration;
+    GST_BUFFER_FLAG_SET (filler, GST_BUFFER_FLAG_GAP);
+    gst_buffer_unref (buffer);
+    buffer = filler;
+  }
+
+  if (buffer)
+    gst_adapter_push (adapter, buffer);
+'@
+$alaw = Replace-Exact $alaw $old $new 'sparse-alaw-structural-filler'
+Set-Content -Encoding UTF8 -LiteralPath $alawPath -Value $alaw
+
+# 7) Isolate plugin registration: only patched muxer is exposed; stock mxfdemux remains official.
 $pluginPath = Join-Path $BuildSrc 'mxf.c'
 $pc = Get-Content -Raw -LiteralPath $pluginPath
 $old = @'
@@ -333,6 +393,7 @@ $marker = Join-Path $BuildSrc 'PATCHED-2.0.14.txt'
 Upstream: GStreamer $Tag / subprojects/gst-plugins-bad/gst/mxf
 Factory: mxfidmux
 Patch: per-request-pad identity + downstream complete-KLV source timing metadata
+Sparse audio: GAP time is serialized as valid PCMA 0xD5 structural filler; recorder audit remains the media/evidence authority.
 Serialization: MXF Track Name only; structural IDs are not overloaded.
 Growing playback: GstBuffer timing metadata is downstream-only and does not alter MXF bytes.
 "@ | Set-Content -Encoding UTF8 -LiteralPath $marker
