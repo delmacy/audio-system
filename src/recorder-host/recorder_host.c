@@ -743,6 +743,10 @@ static int build_shared_groups(RecorderHost *host) {
         group->started_tick_ms = GetTickCount64();
         state_result = gst_element_set_state(group->pipeline, GST_STATE_PLAYING);
         if (state_result == GST_STATE_CHANGE_FAILURE) return 0;
+        for (i = 0; i < group->session_count; i++) {
+            RecorderSession *session = &host->sessions[group->session_indices[i]];
+            audit_event(host, session, "MXF_TIMELINE_ORIGIN", group->timeline_origin_utc);
+        }
         g_print("SHARED MXF ARMED category=%s tracks=%d file=%s\n",
             group->category, group->session_count, group->output_final);
     }
