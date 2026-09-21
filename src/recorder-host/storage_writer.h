@@ -13,6 +13,7 @@ typedef struct StorageWriter {
     char file_id[128];
     char recorder_id[128];
     char window_start_utc[64];
+    char timeline_origin_utc[64];
     unsigned int segment_sequence;
     unsigned long long bytes_written;
     unsigned long long flushed_bytes;
