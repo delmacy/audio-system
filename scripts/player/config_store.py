@@ -153,37 +153,30 @@ def initialize() -> None:
 
         if con.execute("SELECT COUNT(*) FROM service").fetchone()[0] == 0:
             now = utc_now()
-            for kind, label, sip_uri in SEED_SERVICES:
-                con.execute(
-                    """
-                    INSERT INTO service(id,kind,label,endpoint,sip_uri,gateway_id,enabled,created_at,updated_at)
-                    VALUES(?,?,?,?,?,?,1,?,?)
-                    """,
-                    (
-                        str(uuid.uuid4()),
-                        kind,
-                        label,
-                        sip_uri,
-                        sip_uri,
-                        gateway_id if kind == "RADIO" else None,
-                        now,
-                        now,
-                    ),
-                )
-        else:
-            # Safe compatibility migration: SIP endpoints can be promoted without guessing.
-            con.execute("""
-                UPDATE service
-                SET sip_uri=endpoint
-                WHERE sip_uri IS NULL AND endpoint LIKE 'sip:%'
-            """)
-            rows = con.execute("""
-                SELECT id,label,gateway_id FROM service
-                WHERE gateway_id IS NOT NULL AND (sip_uri LIKE 'sip:%' OR endpoint LIKE 'sip:%')
-            """).fetchall()
-            for row in rows:
+            for kind, label, _legacy_uri in SEED_SERVICES:
                 try:
-                    sip_uri, selected_gateway = _service_sip_uri(con, str(row["label"]), str(row["gateway_id"]))
+                    sip_user = _service_sip_user(label)
+                    gateway = con.execute(
+                        "SELECT ip,sip_port FROM sip_gateway WHERE id=?",
+                        (gateway_id,),
+                    ).fetchone()
+                    sip_uri = f"sip:{sip_user}@{gateway['ip']}:{int(gateway['sip_port'])}"
+                    con.execute(
+                        """
+                        INSERT INTO service(id,kind,label,endpoint,sip_uri,gateway_id,enabled,created_at,updated_at)
+                        VALUES(?,?,?,?,?,?,1,?,?)
+                        """,
+                        (str(uuid.uuid4()), kind, label, sip_uri, sip_uri, gateway_id, now, now),
+                    )
+                except ValueError:
+                    pass
+        else:
+            # Migrate existing services to the current RPS-derived SIP addressing rule.
+            rows = con.execute("SELECT id,label,gateway_id FROM service").fetchall()
+            for row in rows:
+                selected_gateway = str(row["gateway_id"]) if row["gateway_id"] else gateway_id
+                try:
+                    sip_uri, selected_gateway = _service_sip_uri(con, str(row["label"]), selected_gateway)
                     con.execute(
                         "UPDATE service SET endpoint=?,sip_uri=?,gateway_id=? WHERE id=?",
                         (sip_uri, sip_uri, selected_gateway, str(row["id"])),
@@ -395,6 +388,19 @@ def update_gateway(record_id: str, label: str, ip: str, sip_port: int, rtsp_base
             )
             if cursor.rowcount == 0:
                 raise LookupError("Gateway not found")
+            services = con.execute(
+                "SELECT id,label FROM service WHERE gateway_id=?",
+                (record_id,),
+            ).fetchall()
+            for service in services:
+                try:
+                    sip_uri, _ = _service_sip_uri(con, str(service["label"]), record_id)
+                    con.execute(
+                        "UPDATE service SET endpoint=?,sip_uri=?,updated_at=? WHERE id=?",
+                        (sip_uri, sip_uri, now, str(service["id"])),
+                    )
+                except ValueError:
+                    pass
     except sqlite3.IntegrityError as exc:
         raise ValueError("Gateway label already exists") from exc
     return get_gateway(record_id)
