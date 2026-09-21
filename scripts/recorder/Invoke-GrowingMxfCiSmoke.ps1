@@ -130,6 +130,65 @@ $recorderArgs = @(
 )
 $recorder = Start-NativeProcessRedirected -FilePath $exe -Arguments $recorderArgs -StdOutPath $stdout -StdErrPath $stderr -WorkingDirectory $root
 
+function Test-TrackHasConfirmedMedia {
+    param(
+        [Parameter(Mandatory=$true)]$LockState,
+        [Parameter(Mandatory=$true)][string]$LogicalTrackUuid
+    )
+
+    if (-not (Test-Path -LiteralPath $audit)) { return $false }
+    $originText = [string]$LockState.timeline_origin_utc
+    if (-not $originText) { return $false }
+
+    try {
+        $origin = [DateTimeOffset]::Parse($originText)
+        [int64]$committedNs = [int64]$LockState.committed_position_ns
+        $confirmedEnd = $origin.AddTicks([int64]($committedNs / 100))
+    }
+    catch {
+        return $false
+    }
+
+    foreach ($line in @(Get-Content -LiteralPath $audit -ErrorAction SilentlyContinue)) {
+        if (-not $line) { continue }
+        try { $event = $line | ConvertFrom-Json } catch { continue }
+        if ([string]$event.logical_track_uuid -ne $LogicalTrackUuid) { continue }
+        if ([string]$event.event -ne 'MEDIA_START') { continue }
+        try { $mediaStart = [DateTimeOffset]::Parse([string]$event.ts_utc) } catch { continue }
+        if ($mediaStart -lt $confirmedEnd) { return $true }
+    }
+    return $false
+}
+
+function Wait-TrackConfirmedMedia {
+    param(
+        [Parameter(Mandatory=$true)][string]$LogicalTrackUuid,
+        [int]$TimeoutSeconds = 12,
+        [uint64]$MinGeneration = 0
+    )
+
+    $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+    while ([DateTime]::UtcNow -lt $deadline) {
+        if ($recorder.Process.HasExited) {
+            throw "Recorder exited while waiting for confirmed media on $LogicalTrackUuid."
+        }
+        if (Test-Path -LiteralPath $lock) {
+            try {
+                $candidate = Get-Content -LiteralPath $lock -Raw | ConvertFrom-Json
+                if ($candidate.read_safe -and
+                    [uint64]$candidate.commit_generation -ge $MinGeneration -and
+                    [uint64]$candidate.committed_position_ns -gt 0 -and
+                    (Test-TrackHasConfirmedMedia -LockState $candidate -LogicalTrackUuid $LogicalTrackUuid)) {
+                    return $candidate
+                }
+            }
+            catch {}
+        }
+        Start-Sleep -Milliseconds 100
+    }
+    throw "Timed out waiting for audit-confirmed growing media on LogicalTrackUUID $LogicalTrackUuid."
+}
+
 try {
     $deadline = [DateTime]::UtcNow.AddSeconds(15)
     while (-not (Test-Path -LiteralPath $ready)) {
@@ -231,24 +290,8 @@ try {
         $running += [pscustomobject]@{ track=$track; handle=$handle }
     }
 
-    $first = $null
-    $deadline = [DateTime]::UtcNow.AddSeconds(12)
-    while (-not $first) {
-        if ($recorder.Process.HasExited) { throw 'Recorder exited before publishing a read-safe watermark.' }
-        if (Test-Path -LiteralPath $lock) {
-            try {
-                $candidate = Get-Content -LiteralPath $lock -Raw | ConvertFrom-Json
-                if ($candidate.read_safe -and [uint64]$candidate.committed_position_ns -gt 0 -and
-                    [uint64]$candidate.flushed_bytes -gt 0) {
-                    $first = $candidate
-                }
-            } catch {}
-        }
-        if (-not $first) {
-            if ([DateTime]::UtcNow -gt $deadline) { throw 'Timed out waiting for first growing-MXF watermark.' }
-            Start-Sleep -Milliseconds 100
-        }
-    }
+    $first = Wait-TrackConfirmedMedia -LogicalTrackUuid $tracks[0].logical -TimeoutSeconds 15
+
 
     if (-not (Test-Path -LiteralPath $partial)) { throw 'Growing MXF partial does not exist at first watermark.' }
     if (Test-Path -LiteralPath $final) { throw 'Final MXF exists before EOS; growing test is not exercising an open file.' }
@@ -259,22 +302,19 @@ try {
     & python $probe '--logical-track-uuid' $tracks[0].logical '--output' $probe1 '--min-generation' ([string]$first.commit_generation)
     if ($LASTEXITCODE -ne 0) { throw 'First growing-MXF playback probe failed.' }
 
+    $deadline = [DateTime]::UtcNow.AddSeconds(12)
     $second = $null
-    $deadline = [DateTime]::UtcNow.AddSeconds(8)
     while (-not $second) {
-        if ($recorder.Process.HasExited) { throw 'Recorder exited before watermark advancement could be observed.' }
-        try {
-            $candidate = Get-Content -LiteralPath $lock -Raw | ConvertFrom-Json
-            if ([uint64]$candidate.commit_generation -gt [uint64]$first.commit_generation -and
-                [uint64]$candidate.committed_position_ns -gt [uint64]$first.committed_position_ns) {
-                $second = $candidate
-            }
-        } catch {}
-        if (-not $second) {
-            if ([DateTime]::UtcNow -gt $deadline) { throw 'Growing-MXF watermark did not advance.' }
-            Start-Sleep -Milliseconds 100
+        $candidate = Wait-TrackConfirmedMedia -LogicalTrackUuid $tracks[1].logical -TimeoutSeconds 2 -MinGeneration ([uint64]$first.commit_generation + 1)
+        if ([uint64]$candidate.committed_position_ns -gt [uint64]$first.committed_position_ns) {
+            $second = $candidate
+            break
+        }
+        if ([DateTime]::UtcNow -gt $deadline) {
+            throw 'Growing-MXF watermark did not advance over confirmed media for the second track.'
         }
     }
+
 
     $probe2 = Join-Path $runDir 'probe-second.wav'
     & python $probe '--logical-track-uuid' $tracks[1].logical '--output' $probe2 '--min-generation' ([string]$second.commit_generation)
