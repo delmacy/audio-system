@@ -199,12 +199,10 @@ def main() -> None:
             f"CSeq: {cseq}\r\nSession: {sid}\r\n"
             f"X-Audio-Event: HANGUP\r\nX-Event-Utc: {event_utc}\r\n\r\n",
         )
-        cseq += 1
-        send_rtsp(
-            sock,
-            f"TEARDOWN {uri} RTSP/1.0\r\n"
-            f"CSeq: {cseq}\r\nSession: {sid}\r\n\r\n",
-        )
+        # HANGUP is the semantic end of a telephone RecordingLeg and is
+        # sufficient to queue/finalize its MXF. Do not serialize another
+        # 1,000 TEARDOWN round-trips behind mass finalization; simply release
+        # the RTSP transport after the HANGUP acknowledgement.
         sock.close()
         if i == 0 or (i + 1) % 100 == 0 or i + 1 == args.legs:
             print(f"RTP BURST CLOSE sessions={i + 1}/{args.legs}", flush=True)
