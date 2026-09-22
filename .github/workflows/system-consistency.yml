@@ -275,7 +275,6 @@ jobs:
         run: ./scripts/recorder/Invoke-EventRouteCapacityCiSmoke.ps1 -SessionCount 1000
 
       - name: Event-file 1000 x 10s ring materialization
-        if: contains(github.event.head_commit.message, '[burst1000]')
         shell: pwsh
         run: ./scripts/recorder/Invoke-EventFileBurstCiSmoke.ps1 -LegCount 1000 -RingSeconds 10 -ToneHz 440
 
