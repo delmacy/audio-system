@@ -105,12 +105,13 @@ if ($tooSmall.Count -ne 0) {
     throw "$($tooSmall.Count) MXF files are not larger than their $expectedPayloadBytes-byte PCMA payload."
 }
 
+$lastIndex = [int]$files.Count - 1
 $indices = @(
-    0,
-    [Math]::Floor(($files.Count - 1) * 0.25),
-    [Math]::Floor(($files.Count - 1) * 0.50),
-    [Math]::Floor(($files.Count - 1) * 0.75),
-    $files.Count - 1
+    0
+    [int][Math]::Floor($lastIndex * 0.25)
+    [int][Math]::Floor($lastIndex * 0.50)
+    [int][Math]::Floor($lastIndex * 0.75)
+    $lastIndex
 ) | Select-Object -Unique
 
 foreach ($index in $indices) {
