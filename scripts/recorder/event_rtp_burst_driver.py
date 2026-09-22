@@ -159,7 +159,7 @@ def main() -> None:
         else:
             max_lateness_ms = max(max_lateness_ms, -remaining * 1000.0)
 
-        if (frame == 0 or (frame + 1) % 50 == 0 or frame + 1 == frames:
+        if frame == 0 or (frame + 1) % 50 == 0 or frame + 1 == frames:
             print(
                 f"RTP BURST STREAM frame={frame + 1}/{frames} "
                 f"packets={(frame + 1) * args.legs}",
@@ -186,7 +186,7 @@ def main() -> None:
             f"CSeq: {cseq}\r\nSession: {sid}\r\n\r\n",
         )
         sock.close()
-        if (i == 0 or (i + 1) % 100 == 0 or i + 1 == args.legs:
+        if i == 0 or (i + 1) % 100 == 0 or i + 1 == args.legs:
             print(f"RTP BURST CLOSE sessions={i + 1}/{args.legs}", flush=True)
 
     close_ms = int((time.perf_counter() - close_started) * 1000)
