@@ -13,6 +13,7 @@ $ErrorActionPreference = 'Stop'
 if ($LegCount -lt 1 -or $LegCount -gt 1800) { throw 'LegCount must be between 1 and 1800.' }
 if ($RingSeconds -lt 1 -or $RingSeconds -gt 16) { throw 'RingSeconds must be between 1 and 16 seconds.' }
 
+$totalWatch = [Diagnostics.Stopwatch]::StartNew()
 $root = Get-ProjectRoot
 $exe = Find-RecorderHostExe
 if (-not $exe) { throw 'recorder-host.exe was not built.' }
@@ -118,8 +119,11 @@ try {
     $driverJson = $driverPassLine.Substring('RTP BURST DRIVER: PASS '.Length) | ConvertFrom-Json
     $totalMxfBytes = ($files | Measure-Object -Property Length -Sum).Sum
     [ordered]@{schema='audio-system.event-rtp-burst-test.v1';passed=$true;leg_count=$LegCount;ring_seconds=$RingSeconds;expected_packets=$expectedPackets;payload_bytes_per_leg=$expectedPayloadBytes;total_payload_bytes=[int64]$expectedPayloadBytes*[int64]$LegCount;mxf_count=$files.Count;total_mxf_bytes=[int64]$totalMxfBytes;driver=$driverJson;recording_root=$recordingRoot;audit=$audit} | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $summaryPath -Encoding utf8
-    Write-Host ('EVENT RTP BURST E2E: PASS files={0} seconds={1} packets={2} stream_elapsed_ms={3} max_schedule_lateness_ms={4} root={5}' -f $files.Count,$RingSeconds,$expectedPackets,$driverJson.stream_elapsed_ms,$driverJson.max_schedule_lateness_ms,$recordingRoot) -ForegroundColor Green
+    $totalWatch.Stop()
+    Write-Host ('EVENT RTP BURST E2E: PASS files={0} media_seconds={1} packets={2} stream_elapsed_ms={3} total_elapsed_ms={4} total_elapsed_s={5} overhead_s={6} max_schedule_lateness_ms={7} root={8}' -f $files.Count,$RingSeconds,$expectedPackets,$driverJson.stream_elapsed_ms,$totalWatch.ElapsedMilliseconds,[Math]::Round($totalWatch.Elapsed.TotalSeconds,3),[Math]::Round(($totalWatch.Elapsed.TotalSeconds-$RingSeconds),3),$driverJson.max_schedule_lateness_ms,$recordingRoot) -ForegroundColor Green
 } finally {
+    if ($totalWatch.IsRunning) { $totalWatch.Stop() }
+    Write-Host ('TEST TOTAL: elapsed_ms={0} elapsed_s={1} media_s={2} overhead_s={3}' -f $totalWatch.ElapsedMilliseconds,[Math]::Round($totalWatch.Elapsed.TotalSeconds,3),$RingSeconds,[Math]::Round(($totalWatch.Elapsed.TotalSeconds-$RingSeconds),3))
     if (-not $recorder.Process.HasExited) {
         try { Set-Content -LiteralPath $shutdown -Value 'shutdown' -Encoding ascii; [void]$recorder.Process.WaitForExit(10000) } catch {}
         if (-not $recorder.Process.HasExited) { try { $recorder.Process.Kill() } catch {} }
