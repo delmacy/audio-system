@@ -141,30 +141,50 @@ def main() -> None:
     timestamps = [0] * args.legs
     ssrcs = [0x52545000 + i for i in range(args.legs)]
 
+    # Real endpoints are not phase-locked. Spread the 1,000 RTP streams
+    # across each 20 ms packet interval instead of emitting a 1,000-packet
+    # microburst at exactly the same instant. Each stream still sends one
+    # packet every 20 ms (50 pps), preserving 50,000 pps aggregate load.
+    phase_groups = min(50, args.legs)
+    groups: list[list[int]] = [[] for _ in range(phase_groups)]
+    for i in range(args.legs):
+        groups[i % phase_groups].append(i)
+
     stream_started = time.perf_counter()
-    deadline = stream_started
     max_lateness_ms = 0.0
+    sent_packets = 0
     for frame in range(frames):
         payload = pcma[frame * 160:(frame + 1) * 160]
-        for i, dest in enumerate(destinations):
-            packet = rtp_packet(seqs[i], timestamps[i], payload, ssrcs[i])
-            udp.sendto(packet, dest)
-            seqs[i] = (seqs[i] + 1) & 0xFFFF
-            timestamps[i] = (timestamps[i] + 160) & 0xFFFFFFFF
+        frame_base = stream_started + frame * 0.020
+        for group_index, members in enumerate(groups):
+            target = frame_base + (group_index * 0.020 / phase_groups)
+            while True:
+                remaining = target - time.perf_counter()
+                if remaining <= 0:
+                    if remaining < 0:
+                        max_lateness_ms = max(max_lateness_ms, -remaining * 1000.0)
+                    break
+                if remaining > 0.001:
+                    time.sleep(remaining - 0.0005)
 
-        deadline += 0.020
-        remaining = deadline - time.perf_counter()
-        if remaining > 0:
-            time.sleep(remaining)
-        else:
-            max_lateness_ms = max(max_lateness_ms, -remaining * 1000.0)
+            for i in members:
+                packet = rtp_packet(seqs[i], timestamps[i], payload, ssrcs[i])
+                udp.sendto(packet, destinations[i])
+                seqs[i] = (seqs[i] + 1) & 0xFFFF
+                timestamps[i] = (timestamps[i] + 160) & 0xFFFFFFFF
+                sent_packets += 1
 
         if frame == 0 or (frame + 1) % 50 == 0 or frame + 1 == frames:
             print(
                 f"RTP BURST STREAM frame={frame + 1}/{frames} "
-                f"packets={(frame + 1) * args.legs}",
+                f"packets={sent_packets}",
                 flush=True,
             )
+
+    final_deadline = stream_started + frames * 0.020
+    remaining = final_deadline - time.perf_counter()
+    if remaining > 0:
+        time.sleep(remaining)
 
     stream_elapsed_ms = int((time.perf_counter() - stream_started) * 1000)
     udp.close()
@@ -195,7 +215,8 @@ def main() -> None:
         "legs": args.legs,
         "duration_ms": args.duration_ms,
         "frames_per_leg": frames,
-        "packets_sent": frames * args.legs,
+        "packets_sent": sent_packets,
+        "phase_groups": phase_groups,
         "payload_bytes_per_leg": len(pcma),
         "total_payload_bytes": len(pcma) * args.legs,
         "setup_ms": setup_ms,
