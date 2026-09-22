@@ -130,7 +130,7 @@ def main() -> None:
         cseq += 1
         clients.append((sock, sid, uri))
 
-        if (len(clients) % 100 == 0 or len(clients) == args.legs:
+        if len(clients) % 100 == 0 or len(clients) == args.legs:
             print(f"RTP BURST SETUP sessions={len(clients)}/{args.legs}", flush=True)
 
     setup_ms = int((time.perf_counter() - setup_started) * 1000)
