@@ -14,6 +14,8 @@ typedef struct {
     gboolean no_more_pads;
     gboolean structural_complete;
     gboolean had_error;
+    guint codec_mismatches;
+    gboolean enforce_alaw_8k_mono;
     guint timeout_ms;
 } InspectCtx;
 
@@ -411,6 +413,22 @@ static void pad_added_cb(GstElement *demux, GstPad *pad, gpointer user_data) {
         if (!caps) caps = gst_pad_query_caps(pad, NULL);
         gchar *s = caps ? gst_caps_to_string(caps) : g_strdup("unknown");
         g_print("TRACK %u pad=%s caps=%s\n", ctx->pads, GST_PAD_NAME(pad), s);
+        if (ctx->enforce_alaw_8k_mono) {
+            gboolean ok = FALSE;
+            if (caps && gst_caps_get_size(caps) > 0) {
+                const GstStructure *st = gst_caps_get_structure(caps, 0);
+                gint rate = 0, channels = 0;
+                ok = gst_structure_has_name(st, "audio/x-alaw") &&
+                    gst_structure_get_int(st, "rate", &rate) &&
+                    gst_structure_get_int(st, "channels", &channels) &&
+                    rate == 8000 && channels == 1;
+            }
+            if (!ok) {
+                ctx->codec_mismatches++;
+                g_printerr("CODEC MISMATCH track=%u expected=CCITT_G711_ALAW/8000Hz/8bit/mono caps=%s\n",
+                    ctx->pads, s);
+            }
+        }
         g_free(s);
         if (caps) gst_caps_unref(caps);
         gst_element_sync_state_with_parent(q);
@@ -422,7 +440,8 @@ static void pad_added_cb(GstElement *demux, GstPad *pad, gpointer user_data) {
     gst_object_unref(pipeline);
 }
 
-static int inspect_mxf(const char *path, guint expected_pads, guint timeout_ms) {
+static int inspect_mxf(const char *path, guint expected_pads, guint timeout_ms,
+                       gboolean enforce_alaw_8k_mono) {
     GstElement *pipeline = gst_pipeline_new("mxf-lab-inspect");
     GstElement *src = gst_element_factory_make("filesrc", "src");
     GstElement *demux = gst_element_factory_make("mxfdemux", "demux");
@@ -438,7 +457,8 @@ static int inspect_mxf(const char *path, guint expected_pads, guint timeout_ms) 
     }
 
     GMainLoop *loop = g_main_loop_new(NULL, FALSE);
-    InspectCtx ctx = { loop, 0, expected_pads, FALSE, FALSE, FALSE, FALSE, timeout_ms };
+    InspectCtx ctx = { loop, 0, expected_pads, FALSE, FALSE, FALSE, FALSE, 0,
+        enforce_alaw_8k_mono, timeout_ms };
     g_signal_connect(demux, "pad-added", G_CALLBACK(pad_added_cb), &ctx);
     g_signal_connect(demux, "no-more-pads", G_CALLBACK(no_more_pads_cb), &ctx);
 
@@ -468,11 +488,12 @@ static int inspect_mxf(const char *path, guint expected_pads, guint timeout_ms) 
     gst_element_set_state(pipeline, GST_STATE_NULL);
     gst_element_get_state(pipeline, NULL, NULL, 2 * GST_SECOND);
 
-    g_print("MXF-LAB inspect: tracks=%u expected=%u file=%s timed_out=%s no_more_pads=%s structural_complete=%s\n",
+    g_print("MXF-LAB inspect: tracks=%u expected=%u file=%s timed_out=%s no_more_pads=%s structural_complete=%s codec=CCITT_G711_ALAW_8KHZ_8BIT_MONO codec_mismatches=%u\n",
             ctx.pads, ctx.expected_pads, path,
             ctx.timed_out ? "true" : "false",
             ctx.no_more_pads ? "true" : "false",
-            ctx.structural_complete ? "true" : "false");
+            ctx.structural_complete ? "true" : "false",
+            ctx.codec_mismatches);
 
     gst_object_unref(pipeline);
     g_main_loop_unref(loop);
@@ -481,6 +502,7 @@ static int inspect_mxf(const char *path, guint expected_pads, guint timeout_ms) 
     if (ctx.timed_out) return 8;
     if (!ctx.no_more_pads) return 9;
     if (!ctx.structural_complete) return 10;
+    if (ctx.enforce_alaw_8k_mono && ctx.codec_mismatches > 0) return 11;
     return 0;
 }
 
@@ -704,7 +726,7 @@ static void usage(const char *exe) {
     g_print("Usage:\n");
     g_print("  %s write --tracks N --seconds N --out FILE [--crash-after-ms N]\n", exe);
     g_print("  %s write-preencoded --tracks N --active N --seconds N --out FILE --pcma FILE [--chunk-ms N] [--anchor-ms N]\n", exe);
-    g_print("  %s inspect FILE [--expected-tracks N] [--timeout-ms N]\n", exe);
+    g_print("  %s inspect FILE [--expected-tracks N] [--timeout-ms N] [--expected-alaw-8k-mono]\n", exe);
     g_print("  %s write-identity --out FILE --identity-file TSV --plugin-dll FILE [--seconds N]\n", exe);
     g_print("  %s inspect-identity FILE [--timeout-ms N]\n", exe);
     g_print("  %s selftest\n", exe);
@@ -771,13 +793,15 @@ int main(int argc, char **argv) {
     if (strcmp(argv[1], "inspect") == 0 && argc >= 3) {
         guint timeout_ms = 30000;
         guint expected_tracks = 0;
+        gboolean expected_alaw_8k_mono = FALSE;
         for (int i=3; i<argc; i++) {
             if (strcmp(argv[i],"--timeout-ms")==0 && i+1<argc) timeout_ms=(guint)atoi(argv[++i]);
             else if (strcmp(argv[i],"--expected-tracks")==0 && i+1<argc) expected_tracks=(guint)atoi(argv[++i]);
+            else if (strcmp(argv[i],"--expected-alaw-8k-mono")==0) expected_alaw_8k_mono=TRUE;
             else { usage(argv[0]); return 1; }
         }
         if (timeout_ms < 1000) timeout_ms = 1000;
-        return inspect_mxf(argv[2], expected_tracks, timeout_ms);
+        return inspect_mxf(argv[2], expected_tracks, timeout_ms, expected_alaw_8k_mono);
     }
     usage(argv[0]);
     return 1;

@@ -56,7 +56,8 @@ void storage_writer_init(StorageWriter *writer) {
 int storage_writer_write_lock_state(StorageWriter *writer, const char *state, char *error_text, size_t error_text_size) {
     FILE *fp;
     char now[64];
-    char e_file_id[256], e_recorder_id[256], e_partial[8192], e_final[8192], e_window[128];
+    char temp_path[4352];
+    char e_file_id[256], e_recorder_id[256], e_partial[8192], e_final[8192], e_window[128], e_origin[128];
     if (!writer || !writer->lock_path[0]) return 1;
     storage_utc_now(now, sizeof(now));
     json_escape(writer->file_id, e_file_id, sizeof(e_file_id));
@@ -64,14 +65,24 @@ int storage_writer_write_lock_state(StorageWriter *writer, const char *state, ch
     json_escape(writer->partial_path, e_partial, sizeof(e_partial));
     json_escape(writer->final_path, e_final, sizeof(e_final));
     json_escape(writer->window_start_utc, e_window, sizeof(e_window));
-    fp = fopen(writer->lock_path, "wb");
+    json_escape(writer->timeline_origin_utc, e_origin, sizeof(e_origin));
+
+    /*
+     * Readers poll this sidecar while the recorder is running. Write a sibling
+     * temporary file and atomically replace the public sidecar so a reader can
+     * never observe half-written JSON.
+     */
+    snprintf(temp_path, sizeof(temp_path), "%s.tmp.%lu", writer->lock_path,
+        (unsigned long)GetCurrentProcessId());
+    fp = fopen(temp_path, "wb");
     if (!fp) {
-        if (error_text && error_text_size) snprintf(error_text, error_text_size, "Could not write lock sidecar: %s", writer->lock_path);
+        if (error_text && error_text_size) snprintf(error_text, error_text_size,
+            "Could not write temporary lock sidecar: %s", temp_path);
         return 0;
     }
     fprintf(fp,
         "{\n"
-        "  \"schema\": \"recorder-poc.file-lock.v1\",\n"
+        "  \"schema\": \"recorder-poc.file-lock.v2\",\n"
         "  \"file_id\": \"%s\",\n"
         "  \"recorder_id\": \"%s\",\n"
         "  \"pid\": %lu,\n"
@@ -79,9 +90,15 @@ int storage_writer_write_lock_state(StorageWriter *writer, const char *state, ch
         "  \"partial_path\": \"%s\",\n"
         "  \"expected_final_name\": \"%s\",\n"
         "  \"recording_window_start_utc\": \"%s\",\n"
+        "  \"timeline_origin_utc\": \"%s\",\n"
         "  \"segment_sequence\": %u,\n"
         "  \"last_heartbeat_utc\": \"%s\",\n"
-        "  \"bytes_written\": %llu\n"
+        "  \"bytes_written\": %llu,\n"
+        "  \"flushed_bytes\": %llu,\n"
+        "  \"committed_position_ns\": %llu,\n"
+        "  \"commit_generation\": %u,\n"
+        "  \"commit_lag_target_ms\": %u,\n"
+        "  \"read_safe\": %s\n"
         "}\n",
         e_file_id,
         e_recorder_id,
@@ -90,14 +107,43 @@ int storage_writer_write_lock_state(StorageWriter *writer, const char *state, ch
         e_partial,
         e_final,
         e_window,
+        e_origin,
         writer->segment_sequence,
         now,
-        writer->bytes_written);
-    if (fclose(fp) != 0) {
-        if (error_text && error_text_size) snprintf(error_text, error_text_size, "Could not flush lock sidecar: %s", writer->lock_path);
+        writer->bytes_written,
+        writer->flushed_bytes,
+        writer->committed_position_ns,
+        writer->commit_generation,
+        writer->commit_lag_target_ms,
+        writer->committed_position_ns > 0 ? "true" : "false");
+    {
+        int flush_failed = fflush(fp) != 0;
+        int close_failed = fclose(fp) != 0;
+        if (flush_failed || close_failed) {
+            DeleteFileA(temp_path);
+            if (error_text && error_text_size) snprintf(error_text, error_text_size,
+                "Could not flush temporary lock sidecar: %s", temp_path);
+            return 0;
+        }
+    }
+    {
+        DWORD err = ERROR_SUCCESS;
+        int attempt;
+        for (attempt = 0; attempt < 10; attempt++) {
+            if (MoveFileExA(temp_path, writer->lock_path,
+                    MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
+                return 1;
+            err = GetLastError();
+            if (err != ERROR_SHARING_VIOLATION &&
+                err != ERROR_LOCK_VIOLATION &&
+                err != ERROR_ACCESS_DENIED)
+                break;
+            Sleep(5);
+        }
+        DeleteFileA(temp_path);
+        set_error(error_text, error_text_size, "Atomic lock sidecar replace failed", err);
         return 0;
     }
-    return 1;
 }
 
 int storage_writer_open(
@@ -182,6 +228,35 @@ int storage_writer_flush(StorageWriter *writer, char *error_text, size_t error_t
         writer->had_error = 1;
         return 0;
     }
+    writer->flushed_bytes = writer->bytes_written;
+    return 1;
+}
+
+int storage_writer_commit(
+    StorageWriter *writer,
+    unsigned long long committed_position_ns,
+    unsigned int commit_lag_target_ms,
+    char *error_text,
+    size_t error_text_size) {
+
+    if (!writer || !writer->opened || writer->handle == INVALID_HANDLE_VALUE || writer->had_error) {
+        if (error_text && error_text_size) snprintf(error_text, error_text_size,
+            "StorageWriter cannot publish a commit watermark from current state.");
+        return 0;
+    }
+    if (committed_position_ns <= writer->committed_position_ns) return 1;
+
+    /*
+     * The watermark is published only after all preceding MXF bytes have been
+     * forced through the Windows file cache. A reader may therefore trust
+     * committed_position_ns as a durable, read-safe presentation boundary.
+     */
+    if (!storage_writer_flush(writer, error_text, error_text_size)) return 0;
+    writer->committed_position_ns = committed_position_ns;
+    writer->commit_lag_target_ms = commit_lag_target_ms;
+    writer->commit_generation++;
+    if (!storage_writer_write_lock_state(writer, "RECORDING_LOCKED",
+            error_text, error_text_size)) return 0;
     return 1;
 }
 

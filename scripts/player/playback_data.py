@@ -1,8 +1,8 @@
-"""Real playback boundary for closed operational Recorder MXFs.
+"""Playback boundary for finalized and read-safe growing Recorder MXFs.
 
-This module resolves a LogicalTrackUUID against operational recorder state/audit,
-decodes the actual MXF audio with FFmpeg, and builds a synchronized PCM WAV over
-an explicit UTC window. Gaps are presentation silence, never evidence audio.
+Finalized MXFs use FFmpeg. Open MXFs are read only through the recorder-published
+watermark and their A-law essence KLVs are placed by recorder-audit UTC intervals.
+Gaps are presentation silence, never evidence audio.
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ import shutil
 import struct
 import subprocess
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -23,6 +23,9 @@ SAMPLE_RATE = 8000
 BYTES_PER_SAMPLE = 2
 BYTES_PER_MS = SAMPLE_RATE * BYTES_PER_SAMPLE / 1000.0
 MAX_WINDOW_SECONDS = 15 * 60
+EDIT_UNIT_NS = 100_000_000
+SAMPLES_PER_EDIT_UNIT = SAMPLE_RATE // 10
+GC_ESSENCE_PREFIX = bytes.fromhex("060e2b34010201010d010301")
 
 
 def parse_utc(value: str) -> datetime:
@@ -72,52 +75,179 @@ def _candidate_tracks(logical_track_uuid: str) -> list[tuple[Path, dict, list[di
     return candidates
 
 
-def resolve_operational_track(logical_track_uuid: str) -> dict:
-    for run, track, events in _candidate_tracks(logical_track_uuid):
-        mxf = Path(track["final_mxf"]).resolve()
-        if mxf.parent != run.resolve() or mxf.suffix.lower() != ".mxf" or not mxf.is_file():
+def _matching_events(track: dict, events: list[dict]) -> list[dict]:
+    instance = str(track["track_instance_uuid"])
+    logical = str(track["logical_track_uuid"])
+    return [
+        event for event in events
+        if str(event.get("logical_track_uuid", "")) == logical
+        and str(event.get("track_instance_uuid", "")) == instance
+    ]
+
+
+def _media_intervals(matching: list[dict], confirmed_end: datetime | None = None) -> list[dict]:
+    intervals: list[dict] = []
+    opened: str | None = None
+    for event in matching:
+        if event.get("event") == "MEDIA_START":
+            opened = event.get("ts_utc")
+        elif event.get("event") == "MEDIA_END" and opened:
+            end = event.get("ts_utc")
+            if end:
+                a, z = parse_utc(opened), parse_utc(end)
+                if confirmed_end is not None:
+                    z = min(z, confirmed_end)
+                if z > a:
+                    intervals.append({"start_utc": iso(a), "end_utc": iso(z)})
+            opened = None
+    if opened and confirmed_end is not None:
+        a = parse_utc(opened)
+        if confirmed_end > a:
+            intervals.append({"start_utc": iso(a), "end_utc": iso(confirmed_end), "current": True})
+    return intervals
+
+
+def _timeline_origin_from_events(matching: list[dict]) -> datetime | None:
+    for event in matching:
+        if event.get("event") != "MXF_TIMELINE_ORIGIN":
             continue
-
-        instance = str(track["track_instance_uuid"])
-        lt = str(track["logical_track_uuid"])
-        matching = [
-            event for event in events
-            if str(event.get("logical_track_uuid", "")) == lt
-            and str(event.get("track_instance_uuid", "")) == instance
-        ]
-        kinds = {event.get("event") for event in matching}
-        if not {"WINDOW_CLOSED_COMPLETE", "MEDIA_COMMIT"}.issubset(kinds):
+        raw = str(event.get("detail") or "").strip()
+        if not raw:
             continue
+        try:
+            return parse_utc(raw)
+        except ValueError:
+            continue
+    return None
 
-        intervals = []
-        opened = None
-        for event in matching:
-            if event.get("event") == "MEDIA_START":
-                opened = event.get("ts_utc")
-            elif event.get("event") == "MEDIA_END" and opened:
-                end = event.get("ts_utc")
-                if end and parse_utc(end) > parse_utc(opened):
-                    intervals.append({"start_utc": opened, "end_utc": end})
-                opened = None
 
-        if intervals:
-            return {
-                "run": run,
-                "mxf": mxf,
-                "track": track,
-                "intervals": intervals,
-            }
+def _range_overlaps(start: datetime, end: datetime, from_utc: str | None, to_utc: str | None) -> bool:
+    requested_start = parse_utc(from_utc) if from_utc else start
+    requested_end = parse_utc(to_utc) if to_utc else end
+    return requested_start < end and requested_end > start
 
-    raise LookupError(f"No closed operational MXF found for LogicalTrackUUID {logical_track_uuid}")
+
+def _load_growing_candidate(run: Path, track: dict, events: list[dict],
+                            from_utc: str | None, to_utc: str | None) -> dict | None:
+    final_mxf = Path(track["final_mxf"]).resolve()
+    lock_path = Path(str(final_mxf) + ".lock")
+    if not lock_path.is_file():
+        return None
+    try:
+        lock = _read_json(lock_path)
+        if lock.get("state") != "RECORDING_LOCKED" or not lock.get("read_safe"):
+            return None
+        if track.get("file_id") and str(lock.get("file_id") or "") != str(track.get("file_id")):
+            return None
+        committed_position_ns = int(lock.get("committed_position_ns") or 0)
+        flushed_bytes = int(lock.get("flushed_bytes") or 0)
+        if committed_position_ns <= 0 or flushed_bytes <= 0:
+            return None
+        partial = Path(str(lock.get("partial_path") or "")).resolve()
+        allowed = partial.parent == run.resolve() or partial.is_relative_to((ROOT / "recordings").resolve())
+        if not allowed or not partial.is_file():
+            return None
+        flushed_bytes = min(flushed_bytes, partial.stat().st_size)
+        timeline_origin = parse_utc(str(lock.get("timeline_origin_utc") or lock["recording_window_start_utc"]))
+        confirmed_end = timeline_origin + timedelta(microseconds=committed_position_ns // 1000)
+        if not _range_overlaps(timeline_origin, confirmed_end, from_utc, to_utc):
+            return None
+        matching = _matching_events(track, events)
+        intervals = _media_intervals(matching, confirmed_end)
+        if not intervals:
+            return None
+        return {
+            "run": run,
+            "mxf": partial,
+            "final_mxf": final_mxf,
+            "track": track,
+            "intervals": intervals,
+            "open": True,
+            "lock": lock,
+            "window_start_utc": iso(timeline_origin),
+            "timeline_origin_utc": iso(timeline_origin),
+            "confirmed_until_utc": iso(confirmed_end),
+            "committed_position_ns": committed_position_ns,
+            "flushed_bytes": flushed_bytes,
+            "commit_generation": int(lock.get("commit_generation") or 0),
+            "commit_lag_target_ms": int(lock.get("commit_lag_target_ms") or 0),
+        }
+    except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError):
+        return None
+
+
+def _load_closed_candidate(run: Path, track: dict, events: list[dict],
+                           from_utc: str | None, to_utc: str | None) -> dict | None:
+    mxf = Path(track["final_mxf"]).resolve()
+    allowed = mxf.parent == run.resolve() or mxf.is_relative_to((ROOT / "recordings").resolve())
+    if not allowed or mxf.suffix.lower() != ".mxf" or not mxf.is_file():
+        return None
+
+    matching = _matching_events(track, events)
+    kinds = {event.get("event") for event in matching}
+    classic_closed = {"WINDOW_CLOSED_COMPLETE", "MEDIA_COMMIT"}.issubset(kinds)
+    file_id = str(track.get("file_id") or "")
+    category = str(track.get("category") or "")
+    shared_closed = any(
+        event.get("event") == "SHARED_MXF_CLOSED_COMPLETE"
+        and (
+            (file_id and f"file_id={file_id}" in str(event.get("detail") or ""))
+            or (category and f"category={category}" in str(event.get("detail") or ""))
+        )
+        for event in events
+    )
+    if not classic_closed and not shared_closed:
+        return None
+
+    intervals = _media_intervals(matching)
+    if not intervals:
+        return None
+    natural_start = parse_utc(intervals[0]["start_utc"])
+    natural_end = parse_utc(intervals[-1]["end_utc"])
+    if not _range_overlaps(natural_start, natural_end, from_utc, to_utc):
+        return None
+    timeline_origin = _timeline_origin_from_events(matching)
+    return {
+        "run": run,
+        "mxf": mxf,
+        "track": track,
+        "intervals": intervals,
+        "open": False,
+        "timeline_origin_utc": iso(timeline_origin) if timeline_origin else None,
+    }
+
+
+def resolve_operational_track(
+    logical_track_uuid: str,
+    from_utc: str | None = None,
+    to_utc: str | None = None,
+) -> dict:
+    candidates = _candidate_tracks(logical_track_uuid)
+
+    # Prefer the current growing file when the requested range overlaps its
+    # confirmed prefix. Historical requests naturally fall through to closed MXFs.
+    for run, track, events in candidates:
+        growing = _load_growing_candidate(run, track, events, from_utc, to_utc)
+        if growing:
+            return growing
+
+    for run, track, events in candidates:
+        closed = _load_closed_candidate(run, track, events, from_utc, to_utc)
+        if closed:
+            return closed
+
+    raise LookupError(f"No confirmed operational MXF found for LogicalTrackUUID {logical_track_uuid}")
 
 
 def build_operational_plan(logical_track_uuid: str, from_utc: str | None = None, to_utc: str | None = None) -> dict:
-    resolved = resolve_operational_track(logical_track_uuid)
+    resolved = resolve_operational_track(logical_track_uuid, from_utc, to_utc)
     intervals = resolved["intervals"]
     natural_from = parse_utc(intervals[0]["start_utc"])
     natural_to = parse_utc(intervals[-1]["end_utc"])
     start = parse_utc(from_utc) if from_utc else natural_from
     end = parse_utc(to_utc) if to_utc else natural_to
+    if resolved.get("open") and resolved.get("confirmed_until_utc"):
+        end = min(end, parse_utc(resolved["confirmed_until_utc"]))
     if end <= start:
         raise ValueError("to must be greater than from")
     if (end - start).total_seconds() > MAX_WINDOW_SECONDS:
@@ -160,7 +290,14 @@ def build_operational_plan(logical_track_uuid: str, from_utc: str | None = None,
     track = resolved["track"]
     return {
         "schema": "audio-system.operational-playback-plan.v1",
-        "source_scope": "closed_operational_mxf_recorder_audit",
+        "source_scope": "growing_mxf_confirmed" if resolved.get("open") else "closed_operational_mxf_recorder_audit",
+        "open": bool(resolved.get("open")),
+        "presentation_only": bool(resolved.get("open")),
+        "confirmed_until_utc": resolved.get("confirmed_until_utc"),
+        "committed_position_ns": resolved.get("committed_position_ns"),
+        "flushed_bytes": resolved.get("flushed_bytes"),
+        "commit_generation": resolved.get("commit_generation"),
+        "commit_lag_target_ms": resolved.get("commit_lag_target_ms"),
         "logical_track_uuid": str(track["logical_track_uuid"]),
         "track_instance_uuid": str(track["track_instance_uuid"]),
         "service_id": str(track.get("service_id", "")),
@@ -181,6 +318,140 @@ def build_operational_plan(logical_track_uuid: str, from_utc: str | None = None,
         },
     }
 
+
+def _decode_alaw_byte(value: int) -> int:
+    value ^= 0x55
+    magnitude = (value & 0x0F) << 4
+    segment = (value & 0x70) >> 4
+    if segment == 0:
+        magnitude += 8
+    elif segment == 1:
+        magnitude += 0x108
+    else:
+        magnitude += 0x108
+        magnitude <<= segment - 1
+    return magnitude if value & 0x80 else -magnitude
+
+
+ALAW_PCM_BYTES = tuple(struct.pack("<h", _decode_alaw_byte(value)) for value in range(256))
+
+
+def _read_ber_length(stream, remaining: int) -> tuple[int, int] | None:
+    if remaining < 1:
+        return None
+    first_raw = stream.read(1)
+    if len(first_raw) != 1:
+        return None
+    first = first_raw[0]
+    if not (first & 0x80):
+        return first, 1
+    octets = first & 0x7F
+    if octets == 0 or octets > 8 or remaining < 1 + octets:
+        return None
+    encoded = stream.read(octets)
+    if len(encoded) != octets:
+        return None
+    return int.from_bytes(encoded, "big"), 1 + octets
+
+
+def _is_target_audio_klv(key: bytes, track_index: int) -> bool:
+    return (
+        len(key) == 16
+        and key[:12] == GC_ESSENCE_PREFIX
+        and key[12] == 0x16
+        and key[14] in (0x08, 0x09, 0x0A)
+        and key[15] == track_index + 1
+    )
+
+
+def _decode_target_timeline_pcm(resolved: dict, limit: int) -> bytes:
+    """
+    Decode the selected A-law essence as an MXF-relative PCM timeline.
+
+    Every target essence KLV advances one 100 ms edit unit. Legacy zero-length
+    GAP KLVs become presentation zeros. New structural A-law filler is decoded
+    normally here, but it is removed later by recorder-audit intervals, so
+    recorded silence inside a MEDIA interval remains distinguishable from
+    container padding outside one.
+    """
+    target_track = int(resolved["track"].get("track_index", 0))
+    unit_pcm_bytes = SAMPLES_PER_EDIT_UNIT * BYTES_PER_SAMPLE
+    output = bytearray()
+
+    with Path(resolved["mxf"]).open("rb") as stream:
+        offset = 0
+        while offset + 17 <= limit:
+            key = stream.read(16)
+            if len(key) != 16:
+                break
+            offset += 16
+            decoded = _read_ber_length(stream, limit - offset)
+            if decoded is None:
+                break
+            value_length, ber_size = decoded
+            offset += ber_size
+            if value_length < 0 or value_length > limit - offset:
+                break
+
+            if not _is_target_audio_klv(key, target_track):
+                stream.seek(value_length, 1)
+                offset += value_length
+                continue
+
+            payload = stream.read(value_length)
+            if len(payload) != value_length:
+                break
+            offset += value_length
+
+            # A-law mapping is one 100 ms edit unit at 8 kHz mono. A short
+            # final edit unit is padded only for timeline addressing; audit
+            # intervals still determine what is exposed as recorded media.
+            payload = payload[:SAMPLES_PER_EDIT_UNIT]
+            unit = bytearray()
+            if payload:
+                unit.extend(b"".join(ALAW_PCM_BYTES[value] for value in payload))
+            if len(unit) < unit_pcm_bytes:
+                unit.extend(b"\x00" * (unit_pcm_bytes - len(unit)))
+            output.extend(unit[:unit_pcm_bytes])
+
+    return bytes(output)
+
+
+def _compact_audited_media_pcm(resolved: dict, timeline_pcm: bytes) -> bytes:
+    origin_raw = resolved.get("timeline_origin_utc") or resolved.get("window_start_utc")
+    if not origin_raw:
+        raise ValueError("MXF timeline origin is required for sparse audited playback")
+    origin = parse_utc(str(origin_raw))
+    output = bytearray()
+
+    for interval in resolved["intervals"]:
+        a = parse_utc(interval["start_utc"])
+        z = parse_utc(interval["end_utc"])
+        if z <= a:
+            continue
+        start_ms = max(0.0, (a - origin).total_seconds() * 1000.0)
+        end_ms = max(start_ms, (z - origin).total_seconds() * 1000.0)
+        start_byte = int(round(start_ms * BYTES_PER_MS))
+        end_byte = int(round(end_ms * BYTES_PER_MS))
+        start_byte -= start_byte % BYTES_PER_SAMPLE
+        end_byte -= end_byte % BYTES_PER_SAMPLE
+        if start_byte >= len(timeline_pcm):
+            continue
+        output.extend(timeline_pcm[start_byte:min(end_byte, len(timeline_pcm))])
+
+    return bytes(output)
+
+
+def _decode_growing_pcm(resolved: dict) -> bytes:
+    """Decode only audit-confirmed media from the read-safe growing prefix."""
+    timeline = _decode_target_timeline_pcm(resolved, int(resolved["flushed_bytes"]))
+    return _compact_audited_media_pcm(resolved, timeline)
+
+
+def _decode_closed_audited_pcm(resolved: dict) -> bytes:
+    """Decode a finalized sparse MXF while excluding structural filler."""
+    timeline = _decode_target_timeline_pcm(resolved, Path(resolved["mxf"]).stat().st_size)
+    return _compact_audited_media_pcm(resolved, timeline)
 
 def _ffmpeg() -> str:
     command = shutil.which("ffmpeg")
@@ -219,7 +490,7 @@ def _wav_bytes(pcm: bytes) -> bytes:
 
 
 def render_operational_wav(logical_track_uuid: str, from_utc: str | None = None, to_utc: str | None = None) -> tuple[dict, bytes]:
-    resolved = resolve_operational_track(logical_track_uuid)
+    resolved = resolve_operational_track(logical_track_uuid, from_utc, to_utc)
     plan = build_operational_plan(logical_track_uuid, from_utc, to_utc)
     start = parse_utc(plan["from_utc"])
     end = parse_utc(plan["to_utc"])
@@ -228,17 +499,26 @@ def render_operational_wav(logical_track_uuid: str, from_utc: str | None = None,
     if total_bytes % 2:
         total_bytes += 1
 
-    cache_key = hashlib.sha256(
-        (str(resolved["mxf"]) + "|" + str(resolved["track"].get("track_index", 0))
-         + "|" + plan["from_utc"] + "|" + plan["to_utc"]
-         + "|" + str(resolved["mxf"].stat().st_mtime_ns)).encode("utf-8")
-    ).hexdigest()
-    CACHE.mkdir(parents=True, exist_ok=True)
-    cache_path = CACHE / f"{cache_key}.wav"
-    if cache_path.is_file():
-        return plan, cache_path.read_bytes()
+    cache_path = None
+    if resolved.get("open"):
+        decoded = _decode_growing_pcm(resolved)
+    else:
+        cache_key = hashlib.sha256(
+            (str(resolved["mxf"]) + "|" + str(resolved["track"].get("track_index", 0))
+             + "|" + plan["from_utc"] + "|" + plan["to_utc"]
+             + "|" + str(resolved["mxf"].stat().st_mtime_ns)).encode("utf-8")
+        ).hexdigest()
+        CACHE.mkdir(parents=True, exist_ok=True)
+        cache_path = CACHE / f"{cache_key}.wav"
+        if cache_path.is_file():
+            return plan, cache_path.read_bytes()
+        if resolved.get("timeline_origin_utc"):
+            decoded = _decode_closed_audited_pcm(resolved)
+        else:
+            # Backward compatibility for finalized recordings created before
+            # MXF_TIMELINE_ORIGIN was persisted in recorder audit.
+            decoded = _decode_pcm(resolved["mxf"], int(resolved["track"].get("track_index", 0)))
 
-    decoded = _decode_pcm(resolved["mxf"], int(resolved["track"].get("track_index", 0)))
     output = bytearray(total_bytes)
     source_cursor = 0
 
@@ -272,5 +552,6 @@ def render_operational_wav(logical_track_uuid: str, from_utc: str | None = None,
             output[target:target + writable] = chunk[:writable]
 
     wav = _wav_bytes(bytes(output))
-    cache_path.write_bytes(wav)
+    if cache_path is not None:
+        cache_path.write_bytes(wav)
     return plan, wav

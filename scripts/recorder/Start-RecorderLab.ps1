@@ -129,6 +129,7 @@ $state | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $statePath -Encodin
 Set-Content -LiteralPath (Join-Path $root 'runs\operational-recorder\current-run.txt') -Value $runDir -Encoding utf8
 
 Write-Host "RECORDER READY_IDLE pid=$($proc.Id) RTSP=$ip`:$port sessions=$($materialized.session_count)"
+Write-Host "AUDIO FORMAT: CCITT G.711 A-law, 8000 Hz, 8-bit, mono (PCMA/RTP PT 8)"
 foreach ($name in @('cwp','radio','telephone')) {
   $file = $manifest.files.$name
   if ($file) { Write-Host ("{0}: {1} tracks={2}" -f $name.ToUpperInvariant(),$file.path,$file.track_count) }

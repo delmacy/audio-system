@@ -12,6 +12,8 @@
     "preview": "npm run preview --workspace=player-app",
     "dev:supervisor": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\dev\\Start-AudioSystemDev.ps1",
     "clean:legacy-node-modules": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\dev\\Clean-LegacyNodeModules.ps1",
+    "tone:generate": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\generator\\New-TestTone.ps1",
+    "tone:scenario": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\generator\\Invoke-ToneScenario.ps1",
     "tone:recorder": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\recorder\\Start-ToneRecorderLab.ps1",
     "tone:inject": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\player\\Invoke-MultiTrackToneTest.ps1",
     "tone:single-mxf": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\player\\Invoke-SingleMxfToneTest.ps1",
@@ -21,6 +23,7 @@
     "rps:smoke": "python scripts/gateway/rps_smoke.py",
     "rps:e2e": "python scripts/gateway/rps_telephone_e2e.py",
     "rps:radio:e2e": "python scripts/gateway/rps_nontelephone_e2e.py --kind radio",
-    "rps:cwp:e2e": "python scripts/gateway/rps_nontelephone_e2e.py --kind cwp"
+    "rps:cwp:e2e": "python scripts/gateway/rps_nontelephone_e2e.py --kind cwp",
+    "recorder:event": "powershell -NoProfile -ExecutionPolicy Bypass -File .\\\\scripts\\\\recorder\\\\Start-EventRecorderLab.ps1"
   }
 }

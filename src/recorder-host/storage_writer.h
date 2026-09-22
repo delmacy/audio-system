@@ -13,8 +13,13 @@ typedef struct StorageWriter {
     char file_id[128];
     char recorder_id[128];
     char window_start_utc[64];
+    char timeline_origin_utc[64];
     unsigned int segment_sequence;
     unsigned long long bytes_written;
+    unsigned long long flushed_bytes;
+    unsigned long long committed_position_ns;
+    unsigned int commit_generation;
+    unsigned int commit_lag_target_ms;
     int opened;
     int finalized;
     int had_error;
@@ -34,6 +39,12 @@ int storage_writer_open(
     size_t error_text_size);
 int storage_writer_write(StorageWriter *writer, const unsigned char *data, size_t size, char *error_text, size_t error_text_size);
 int storage_writer_flush(StorageWriter *writer, char *error_text, size_t error_text_size);
+int storage_writer_commit(
+    StorageWriter *writer,
+    unsigned long long committed_position_ns,
+    unsigned int commit_lag_target_ms,
+    char *error_text,
+    size_t error_text_size);
 int storage_writer_finalize(StorageWriter *writer, char *error_text, size_t error_text_size);
 void storage_writer_abort(StorageWriter *writer);
 int storage_writer_write_lock_state(StorageWriter *writer, const char *state, char *error_text, size_t error_text_size);

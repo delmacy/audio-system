@@ -1,6 +1,7 @@
-"""Observed timeline data from the temporal index and closed operational MXFs.
+"""Observed timeline data from finalized and read-safe growing Recorder MXFs.
 
-Audit intervals are useful for navigation but are not an indexed evidence chain.
+Open-file intervals stop at the recorder-published watermark. They are useful
+for near-live presentation but are not a finalized/indexed evidence chain.
 """
 
 from __future__ import annotations
@@ -24,6 +25,43 @@ def parse_utc(value: str) -> datetime:
 
 def iso(value: datetime) -> str:
     return value.astimezone(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+def _growing_mxf_state(run: Path, track_state: dict) -> dict | None:
+    final_mxf = Path(str(track_state.get("final_mxf") or "")).resolve()
+    if not str(track_state.get("final_mxf") or ""):
+        return None
+    lock_path = Path(str(final_mxf) + ".lock")
+    if not lock_path.is_file():
+        return None
+    try:
+        lock = json.loads(lock_path.read_text(encoding="utf-8-sig"))
+        if lock.get("state") != "RECORDING_LOCKED" or not lock.get("read_safe"):
+            return None
+        committed_position_ns = int(lock.get("committed_position_ns") or 0)
+        flushed_bytes = int(lock.get("flushed_bytes") or 0)
+        partial = Path(str(lock.get("partial_path") or "")).resolve()
+        if committed_position_ns <= 0 or flushed_bytes <= 0 or not partial.is_file():
+            return None
+        allowed = (
+            partial.is_relative_to((ROOT / "recordings").resolve())
+            or partial.parent == run.resolve()
+        )
+        if not allowed:
+            return None
+        timeline_origin = parse_utc(str(lock.get("timeline_origin_utc") or lock["recording_window_start_utc"]))
+        confirmed_end = timeline_origin + timedelta(microseconds=committed_position_ns // 1000)
+        return {
+            "partial": partial,
+            "lock": lock_path,
+            "confirmed_end_utc": iso(confirmed_end),
+            "committed_position_ns": committed_position_ns,
+            "flushed_bytes": flushed_bytes,
+            "commit_generation": int(lock.get("commit_generation") or 0),
+            "commit_lag_target_ms": int(lock.get("commit_lag_target_ms") or 0),
+        }
+    except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError):
+        return None
 
 
 def latest_index() -> Path | None:
@@ -90,13 +128,14 @@ def index_intervals(day: str) -> list[dict]:
 
 
 def _operational_track_intervals(run: Path, track_state: dict, events: list[dict], ordinal: int) -> list[dict]:
-    mxf = Path(track_state["final_mxf"]).resolve()
-    allowed = (
-        mxf.parent == run.resolve()
-        or mxf.is_relative_to((ROOT / "recordings").resolve())
+    final_mxf = Path(track_state["final_mxf"]).resolve()
+    allowed_final = (
+        final_mxf.parent == run.resolve()
+        or final_mxf.is_relative_to((ROOT / "recordings").resolve())
     )
-    if not allowed or mxf.suffix.lower() != ".mxf" or not mxf.is_file():
+    if not allowed_final or final_mxf.suffix.lower() != ".mxf":
         return []
+
     track = track_state["logical_track_uuid"]
     instance = track_state["track_instance_uuid"]
     matching = [e for e in events if e.get("logical_track_uuid") == track and e.get("track_instance_uuid") == instance]
@@ -112,32 +151,60 @@ def _operational_track_intervals(run: Path, track_state: dict, events: list[dict
         )
         for event in events
     )
-    if not classic_closed and not shared_closed:
+    is_closed = (classic_closed or shared_closed) and final_mxf.is_file()
+    growing = None if is_closed else _growing_mxf_state(run, track_state)
+    if not is_closed and not growing:
         return []
+
+    confirmed_end = parse_utc(growing["confirmed_end_utc"]) if growing else None
+    source = "closed_mxf_recorder_audit_unindexed" if is_closed else "growing_mxf_confirmed"
     opened = None
     items = []
+
+    def append_interval(start_value: str, end_value: str, current: bool = False) -> None:
+        start_dt = parse_utc(start_value)
+        end_dt = parse_utc(end_value)
+        if confirmed_end is not None:
+            end_dt = min(end_dt, confirmed_end)
+        if end_dt <= start_dt:
+            return
+        item = {
+            "id": f"{run.name}-{ordinal}-{len(items)}",
+            "start_utc": iso(start_dt), "end_utc": iso(end_dt),
+            "logical_track_uuid": track, "track_instance_uuid": instance,
+            "service_type": track_state.get("service_type", "radio"),
+            "service_id": track_state["service_id"],
+            "endpoint_id": track_state["endpoint_id"],
+            "run_id": run.name,
+            "mxf_name": final_mxf.name,
+            "track_index": int(track_state.get("track_index", ordinal)),
+            "track_role": track_state.get("role"),
+            "slot_index": track_state.get("slot_index"),
+            "category": track_state.get("category"),
+            "source": source,
+        }
+        if growing:
+            item.update({
+                "growing": True,
+                "confirmed_end_utc": growing["confirmed_end_utc"],
+                "commit_generation": growing["commit_generation"],
+                "commit_lag_target_ms": growing["commit_lag_target_ms"],
+                "current": current,
+            })
+        items.append(item)
+
     for event in matching:
         if event.get("event") == "MEDIA_START":
             opened = event.get("ts_utc")
         elif event.get("event") == "MEDIA_END" and opened:
             end = event.get("ts_utc")
-            if parse_utc(end) > parse_utc(opened):
-                items.append({
-                    "id": f"{run.name}-{ordinal}-{len(items)}",
-                    "start_utc": opened, "end_utc": end,
-                    "logical_track_uuid": track, "track_instance_uuid": instance,
-                    "service_type": track_state.get("service_type", "radio"),
-                    "service_id": track_state["service_id"],
-                    "endpoint_id": track_state["endpoint_id"],
-                    "run_id": run.name,
-                    "mxf_name": mxf.name,
-                    "track_index": int(track_state.get("track_index", ordinal)),
-                    "track_role": track_state.get("role"),
-                    "slot_index": track_state.get("slot_index"),
-                    "category": track_state.get("category"),
-                    "source": "closed_mxf_recorder_audit_unindexed",
-                })
+            if end:
+                append_interval(opened, end)
             opened = None
+
+    if growing and opened and confirmed_end and confirmed_end > parse_utc(opened):
+        append_interval(opened, growing["confirmed_end_utc"], current=True)
+
     return items
 
 
@@ -173,6 +240,45 @@ def operational_intervals(day: str, run_selector: str | None = None) -> list[dic
             continue
     return result
 
+def operational_live_heads(day: str, run_selector: str | None = None) -> list[dict]:
+    directory = ROOT / "runs" / "operational-recorder"
+    if not directory.is_dir():
+        return []
+    runs = sorted(
+        (item for item in directory.iterdir() if item.is_dir() and item.name.startswith(day + "-")),
+        key=lambda item: item.name,
+    )
+    if run_selector == "latest":
+        runs = runs[-1:] if runs else []
+    elif run_selector:
+        runs = [item for item in runs if item.name == run_selector]
+
+    heads: dict[str, dict] = {}
+    for run in runs:
+        state_file = run / "operational-recorder-state.json"
+        if not state_file.is_file():
+            continue
+        try:
+            state = json.loads(state_file.read_text(encoding="utf-8-sig"))
+            track_states = state["tracks"] if isinstance(state.get("tracks"), list) else [state]
+            for track_state in track_states:
+                growing = _growing_mxf_state(run, track_state)
+                if not growing:
+                    continue
+                key = str(growing["lock"])
+                heads[key] = {
+                    "run_id": run.name,
+                    "category": track_state.get("category") or track_state.get("recording_category"),
+                    "file_id": track_state.get("file_id"),
+                    "confirmed_until_utc": growing["confirmed_end_utc"],
+                    "commit_generation": growing["commit_generation"],
+                    "lag_target_ms": growing["commit_lag_target_ms"],
+                }
+        except (OSError, ValueError, KeyError, json.JSONDecodeError):
+            continue
+    return sorted(heads.values(), key=lambda item: (str(item.get("category") or ""), item["confirmed_until_utc"]))
+
+
 def build_timeline(date: str | None = None, start: str | None = None, run: str | None = None) -> dict:
     if date is None:
         date = latest_local_date()
@@ -185,10 +291,14 @@ def build_timeline(date: str | None = None, start: str | None = None, run: str |
     day = date.replace("-", "")
     if run:
         intervals = operational_intervals(day, run_selector=run)
+        live_heads = operational_live_heads(day, run_selector=run)
     else:
         intervals = index_intervals(day) + operational_intervals(day)
+        live_heads = operational_live_heads(day)
     if start is None:
-        latest = max((parse_utc(s["end_utc"]).astimezone(LOCAL_TZ) for s in intervals), default=None)
+        latest_candidates = [parse_utc(s["end_utc"]).astimezone(LOCAL_TZ) for s in intervals]
+        latest_candidates.extend(parse_utc(head["confirmed_until_utc"]).astimezone(LOCAL_TZ) for head in live_heads)
+        latest = max(latest_candidates, default=None)
         start_hour = max(0, min(22, latest.hour - 1)) if latest else 8
         start = f"{start_hour:02d}:00"
     local_start = datetime.fromisoformat(f"{date}T{start}:00").replace(tzinfo=LOCAL_TZ)
@@ -221,12 +331,24 @@ def build_timeline(date: str | None = None, start: str | None = None, run: str |
             tracks.append(track)
         group["tracks"] = tracks
         ordered.append(group)
-    return {"schema": "recorder-poc.timeline-observed.v1", "scope": "observed_closed_mxf_intervals",
+    growing_intervals = [s for s in active if s["source"] == "growing_mxf_confirmed"]
+    confirmed_heads = [parse_utc(head["confirmed_until_utc"]) for head in live_heads]
+    global_live_head = min(confirmed_heads) if confirmed_heads else None
+    latest_candidates_utc = [parse_utc(s["end_utc"]) for s in intervals] + confirmed_heads
+    latest_available = max(latest_candidates_utc) if latest_candidates_utc else None
+    return {"schema": "recorder-poc.timeline-observed.v2", "scope": "observed_confirmed_mxf_intervals",
             "date": date, "start_local": start, "timezone": "UTC-03:00", "run": run,
             "window_start_utc": iso(window_start), "window_end_utc": iso(window_end),
             "groups": ordered, "counts": {"groups": len(ordered),
                                        "logical_tracks": sum(len(g["tracks"]) for g in ordered),
                                        "media_intervals": len(active),
                                        "indexed_intervals": sum(s["source"] == "sqlite_closed_mxf" for s in active),
+                                       "growing_confirmed_intervals": len(growing_intervals),
                                        "unindexed_intervals": sum(s["source"] != "sqlite_closed_mxf" for s in active)},
-            "latest_available_utc": iso(max(parse_utc(s["end_utc"]) for s in intervals)) if intervals else None}
+            "latest_available_utc": iso(latest_available) if latest_available else None,
+            "live": {
+                "available": bool(live_heads),
+                "confirmed_until_utc": iso(global_live_head) if global_live_head else None,
+                "lag_target_ms": max((int(head.get("lag_target_ms") or 0) for head in live_heads), default=0),
+                "heads": live_heads,
+            }}

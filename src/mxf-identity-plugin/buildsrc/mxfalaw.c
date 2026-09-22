@@ -186,21 +186,42 @@ mxf_alaw_write_func (GstBuffer * buffer, gpointer mapping_data,
   bytes = speu * md->channels;
 
   /*
-   * Recorder extension: preserve sparse-track time without fabricating
-   * A-law samples. A GAP buffer represents one structural edit unit with
-   * zero essence payload. mxfmux will still advance pad->pos and emit the
-   * corresponding zero-length KLV element, allowing sibling tracks with
-   * real media to progress independently.
+   * Recorder extension: keep sparse tracks standards-decodable. A GAP is
+   * container padding, not recorded evidence. Encode its elapsed time as
+   * valid G.711 A-law silence (0xD5) and feed it through the normal adapter
+   * so every MXF edit unit keeps the expected fixed audio payload size.
+   *
+   * Audit MEDIA_START/MEDIA_END remains authoritative for deciding which
+   * timeline regions are recorded media; players must never promote this
+   * structural filler to evidence audio.
    */
   if (buffer && GST_BUFFER_FLAG_IS_SET (buffer, GST_BUFFER_FLAG_GAP)) {
-    GstBuffer *gap = gst_buffer_new ();
-    GST_BUFFER_PTS (gap) = GST_BUFFER_PTS (buffer);
-    GST_BUFFER_DTS (gap) = GST_BUFFER_DTS (buffer);
-    GST_BUFFER_DURATION (gap) = GST_BUFFER_DURATION (buffer);
-    GST_BUFFER_FLAG_SET (gap, GST_BUFFER_FLAG_GAP);
-    *outbuf = gap;
+    GstClockTime gap_duration = GST_BUFFER_DURATION (buffer);
+    guint64 gap_samples = speu;
+    GstBuffer *filler;
+
+    if (GST_CLOCK_TIME_IS_VALID (gap_duration) && gap_duration > 0)
+      gap_samples = gst_util_uint64_scale_round (gap_duration,
+          (guint64) md->rate, GST_SECOND);
+
+    if (gap_samples == 0)
+      gap_samples = speu;
+
+    filler = gst_buffer_new_allocate (NULL,
+        (gsize) gap_samples * md->channels, NULL);
+    if (!filler) {
+      gst_buffer_unref (buffer);
+      return GST_FLOW_ERROR;
+    }
+
+    gst_buffer_memset (filler, 0, 0xD5,
+        (gsize) gap_samples * md->channels);
+    GST_BUFFER_PTS (filler) = GST_BUFFER_PTS (buffer);
+    GST_BUFFER_DTS (filler) = GST_BUFFER_DTS (buffer);
+    GST_BUFFER_DURATION (filler) = gap_duration;
+    GST_BUFFER_FLAG_SET (filler, GST_BUFFER_FLAG_GAP);
     gst_buffer_unref (buffer);
-    return GST_FLOW_OK;
+    buffer = filler;
   }
 
   if (buffer)
@@ -260,6 +281,9 @@ mxf_alaw_get_descriptor (GstPadTemplate * tmpl, GstCaps * caps,
     g_object_unref (ret);
     return NULL;
   }
+
+  /* CCITT/ITU-T G.711 A-law uses one 8-bit codeword per sample. */
+  ret->quantization_bits = 8;
 
   *handler = mxf_alaw_write_func;
 

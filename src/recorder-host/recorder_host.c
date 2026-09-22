@@ -1,7 +1,7 @@
 #define _CRT_SECURE_NO_WARNINGS
 #define WIN32_LEAN_AND_MEAN
 #ifndef FD_SETSIZE
-#define FD_SETSIZE 512
+#define FD_SETSIZE 2048
 #endif
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -13,6 +13,8 @@
 #include <ctype.h>
 #include <objbase.h>
 #include "storage_writer.h"
+#include "event_file_manager.h"
+#include "event_audio_buffer.h"
 
 #pragma comment(lib, "Ws2_32.lib")
 #pragma comment(lib, "Ole32.lib")
@@ -20,10 +22,17 @@
 #define RTSP_BUFFER_SIZE 65536
 #define RTP_PACKET_MAX 65536
 #define DEFAULT_MAX_SECONDS 120
-#define MAX_SESSIONS 256
-#define MAX_CLIENTS 128
+#define MAX_SESSIONS 2048
+#define MAX_CLIENTS 2048
 #define MAX_SHARED_GROUPS 16
 #define SESSION_MAP_FIELDS 16
+#define LIVE_COMMIT_INTERVAL_MS 1000
+#define LIVE_SAFETY_LAG_MS 1000
+#define LIVE_SAFETY_LAG_NS ((guint64)LIVE_SAFETY_LAG_MS * GST_MSECOND)
+/* mxfalaw.c uses edit_rate 10/1: one structural A-law edit unit per 100 ms. */
+#define SHARED_MXF_AUDIO_EDIT_UNIT_MS 100
+#define SHARED_MXF_AUDIO_EDIT_UNIT_NS ((guint64)SHARED_MXF_AUDIO_EDIT_UNIT_MS * GST_MSECOND)
+#define SHARED_MXF_AUDIO_SAMPLES_PER_EDIT_UNIT 800ULL
 
 typedef struct RecorderHost RecorderHost;
 typedef struct RecorderSession RecorderSession;
@@ -59,6 +68,18 @@ struct RecorderSession {
     GstBus *bus;
     SOCKET rtp_socket;
     char session_id[128];
+    char interaction_id[128];
+    char leg_id[128];
+    char event_media_start_utc[64];
+    char event_last_event_utc[64];
+    char event_state[32];
+    int event_file_open;
+    int event_close_requested;
+    int event_rearm_requested;
+    int event_answered;
+    unsigned int event_sequence;
+    int event_materialize_requested;
+    EventAudioBuffer event_buffer;
     int announced;
     int setup_done;
     int recording;
@@ -82,6 +103,7 @@ struct RecorderSession {
     unsigned long long rtp_packets_late;
     unsigned long long rtp_payload_bytes_recorded;
     unsigned long long media_samples_written;
+    unsigned long long shared_samples_queued;
     guint64 shared_timeline_position_ns;
     unsigned long long rtp_sequence_gap_packets;
     unsigned long long rtp_timestamp_discontinuities;
@@ -132,6 +154,8 @@ typedef struct HostConfig {
     int rotate_window_after_pauses;
     int rotate_window_max_count;
     int shared_mxf_by_output;
+    int event_files_mode;
+    char recording_root[4096];
     char topology_watch_file[4096];
     unsigned long long topology_revision;
     char shutdown_watch_file[4096];
@@ -144,6 +168,7 @@ struct SharedMuxGroup {
     char lock_path[4096];
     char file_id[128];
     char window_start_utc[64];
+    char timeline_origin_utc[64];
     char category[32];
     unsigned int segment_sequence;
     StorageWriter writer;
@@ -154,6 +179,9 @@ struct SharedMuxGroup {
     int session_indices[MAX_SESSIONS];
     int session_count;
     ULONGLONG started_tick_ms;
+    ULONGLONG last_commit_tick_ms;
+    guint64 track_written_end_ns[MAX_SESSIONS];
+    guint64 confirmed_position_ns;
     unsigned long long mux_bytes_written;
     int sink_error;
     int pipeline_error;
@@ -161,6 +189,12 @@ struct SharedMuxGroup {
     int final_ok;
     volatile LONG finalize_state;
 };
+
+static int push_rtp_payload(
+    RecorderSession *session,
+    const unsigned char *payload,
+    int payload_len,
+    guint32 timestamp);
 
 struct RecorderHost {
     HostConfig cfg;
@@ -277,7 +311,7 @@ static char *stristr(const char *haystack, const char *needle) {
 }
 
 static void audit_event(RecorderHost *host, RecorderSession *session, const char *event, const char *detail) {
-    char now[64], e_event[256], e_detail[4096], e_session[256], e_logical[256], e_instance[256], e_file[256], e_route[1024], e_kind[128];
+    char now[64], e_event[256], e_detail[4096], e_session[256], e_logical[256], e_instance[256], e_file[256], e_route[1024], e_kind[128], e_interaction[256], e_leg[256], e_media_start[128], e_event_state[128];
     if (!host || !host->audit) return;
     storage_utc_now(now, sizeof(now));
     json_escape(event, e_event, sizeof(e_event));
@@ -288,10 +322,15 @@ static void audit_event(RecorderHost *host, RecorderSession *session, const char
     json_escape(session ? session->cfg.file_id : "", e_file, sizeof(e_file));
     json_escape(session ? session->cfg.route_key : "", e_route, sizeof(e_route));
     json_escape(session ? session->cfg.session_kind : "", e_kind, sizeof(e_kind));
+    json_escape(session ? session->interaction_id : "", e_interaction, sizeof(e_interaction));
+    json_escape(session ? session->leg_id : "", e_leg, sizeof(e_leg));
+    json_escape(session ? session->event_media_start_utc : "", e_media_start, sizeof(e_media_start));
+    json_escape(session ? session->event_state : "", e_event_state, sizeof(e_event_state));
     EnterCriticalSection(&host->audit_lock);
     fprintf(host->audit,
-        "{\"ts_utc\":\"%s\",\"event\":\"%s\",\"session_id\":\"%s\",\"route_key\":\"%s\",\"file_id\":\"%s\",\"logical_track_uuid\":\"%s\",\"track_instance_uuid\":\"%s\",\"track_index\":%d,\"session_kind\":\"%s\",\"detail\":\"%s\"}\n",
-        now, e_event, e_session, e_route, e_file, e_logical, e_instance, session ? session->track_index : -1, e_kind, e_detail);
+        "{\"ts_utc\":\"%s\",\"event\":\"%s\",\"session_id\":\"%s\",\"route_key\":\"%s\",\"file_id\":\"%s\",\"logical_track_uuid\":\"%s\",\"track_instance_uuid\":\"%s\",\"track_index\":%d,\"session_kind\":\"%s\",\"interaction_id\":\"%s\",\"leg_id\":\"%s\",\"media_start_utc\":\"%s\",\"event_state\":\"%s\",\"detail\":\"%s\"}\n",
+        now, e_event, e_session, e_route, e_file, e_logical, e_instance, session ? session->track_index : -1, e_kind,
+        e_interaction, e_leg, e_media_start, e_event_state, e_detail);
     fflush(host->audit);
     LeaveCriticalSection(&host->audit_lock);
 }
@@ -458,6 +497,9 @@ static int parse_host_config(int argc, char **argv, RecorderHost *host) {
     host->cfg.rotate_window_after_pauses = atoi((v = arg_value(argc, argv, "--rotate-window-after-pauses")) ? v : "0");
     host->cfg.rotate_window_max_count = atoi((v = arg_value(argc, argv, "--rotate-window-max-count")) ? v : "0");
     host->cfg.shared_mxf_by_output = has_arg(argc, argv, "--shared-mxf-by-output");
+    host->cfg.event_files_mode = has_arg(argc, argv, "--event-files");
+    safe_copy(host->cfg.recording_root, sizeof(host->cfg.recording_root),
+        (v = arg_value(argc, argv, "--recording-root")) ? v : "recordings");
     safe_copy(host->cfg.topology_watch_file, sizeof(host->cfg.topology_watch_file),
         (v = arg_value(argc, argv, "--topology-watch-file")) ? v : "");
     host->cfg.topology_revision = _strtoui64(
@@ -465,6 +507,11 @@ static int parse_host_config(int argc, char **argv, RecorderHost *host) {
     safe_copy(host->cfg.shutdown_watch_file, sizeof(host->cfg.shutdown_watch_file),
         (v = arg_value(argc, argv, "--shutdown-watch-file")) ? v : "");
     if (!host->cfg.audit_path[0] || !host->cfg.plugin_dll[0]) return 0;
+    if (host->cfg.shared_mxf_by_output && host->cfg.event_files_mode) {
+        g_printerr("--shared-mxf-by-output and --event-files are mutually exclusive.\n");
+        return 0;
+    }
+    if (host->cfg.event_files_mode && !host->cfg.recording_root[0]) return 0;
     if (host->cfg.rtsp_port < 1 || host->cfg.rtsp_port > 65535 || host->cfg.max_seconds < 1) return 0;
     if (host->cfg.session_map_path[0]) return load_session_map(host, host->cfg.session_map_path);
     return parse_legacy_session(argc, argv, host);
@@ -485,6 +532,83 @@ static gboolean load_identity_plugin(const char *path) {
     return TRUE;
 }
 
+
+static int is_gc_audio_essence_klv(const unsigned char *data, size_t size, int *track_index) {
+    static const unsigned char prefix[12] = {
+        0x06, 0x0e, 0x2b, 0x34, 0x01, 0x02, 0x01, 0x01,
+        0x0d, 0x01, 0x03, 0x01
+    };
+    int ordinal;
+    if (!data || size < 17 || memcmp(data, prefix, sizeof(prefix)) != 0) return 0;
+    if (data[12] != 0x16 || (data[14] != 0x08 && data[14] != 0x09 && data[14] != 0x0a))
+        return 0;
+    ordinal = (int)data[15];
+    if (ordinal < 1) return 0;
+    if (track_index) *track_index = ordinal - 1;
+    return 1;
+}
+
+static int maybe_commit_shared_watermark(
+    SharedMuxGroup *group,
+    GstBuffer *buffer,
+    const unsigned char *data,
+    size_t size,
+    char *error_text,
+    size_t error_text_size) {
+
+    GstClockTime pts, duration;
+    guint64 end_ns, min_end = G_MAXUINT64, safe_position;
+    ULONGLONG now;
+    int track_index, i;
+
+    if (!group || !buffer) return 1;
+    if (!is_gc_audio_essence_klv(data, size, &track_index)) return 1;
+    if (track_index < 0 || track_index >= group->session_count) return 1;
+
+    pts = GST_BUFFER_PTS(buffer);
+    duration = GST_BUFFER_DURATION(buffer);
+    if (!GST_CLOCK_TIME_IS_VALID(pts) || !GST_CLOCK_TIME_IS_VALID(duration)) return 1;
+    if (duration > G_MAXUINT64 - pts) return 0;
+    end_ns = pts + duration;
+    if (end_ns > group->track_written_end_ns[track_index])
+        group->track_written_end_ns[track_index] = end_ns;
+
+    now = GetTickCount64();
+    if (group->last_commit_tick_ms &&
+        now - group->last_commit_tick_ms < LIVE_COMMIT_INTERVAL_MS)
+        return 1;
+    group->last_commit_tick_ms = now;
+
+    /*
+     * A shared MXF is only safe through the least-advanced configured track.
+     * GAP edit units count as structural progress, so inactive tracks can
+     * advance without fabricating recorded audio.
+     */
+    for (i = 0; i < group->session_count; i++) {
+        if (group->track_written_end_ns[i] == 0) {
+            min_end = 0;
+            break;
+        }
+        if (group->track_written_end_ns[i] < min_end)
+            min_end = group->track_written_end_ns[i];
+    }
+    if (min_end <= LIVE_SAFETY_LAG_NS) return 1;
+
+    /*
+     * Keep one full second behind the structurally complete write head.
+     * With the one-second commit cadence this yields the requested ~1-2 s
+     * near-live delay while leaving the timeline strictly read-safe.
+     */
+    safe_position = min_end - LIVE_SAFETY_LAG_NS;
+    if (safe_position <= group->confirmed_position_ns) return 1;
+
+    if (!storage_writer_commit(&group->writer, safe_position,
+            LIVE_SAFETY_LAG_MS, error_text, error_text_size))
+        return 0;
+
+    group->confirmed_position_ns = safe_position;
+    return 1;
+}
 
 static GstFlowReturn on_shared_mux_sample(GstElement *sink, gpointer user_data) {
     SharedMuxGroup *group = (SharedMuxGroup *)user_data;
@@ -509,6 +633,18 @@ static GstFlowReturn on_shared_mux_sample(GstElement *sink, gpointer user_data) 
         return GST_FLOW_ERROR;
     }
     group->mux_bytes_written += map.size;
+
+    if (!maybe_commit_shared_watermark(group, buffer, map.data, map.size,
+            error_text, sizeof(error_text))) {
+        group->sink_error = 1;
+        g_printerr("Growing MXF watermark failure category=%s: %s\n",
+            group->category, error_text);
+        audit_event(group->host, NULL, "INTEGRITY_FAILURE", error_text);
+        gst_buffer_unmap(buffer, &map);
+        gst_sample_unref(sample);
+        return GST_FLOW_ERROR;
+    }
+
     gst_buffer_unmap(buffer, &map);
     gst_sample_unref(sample);
     return GST_FLOW_OK;
@@ -638,9 +774,16 @@ static int build_shared_groups(RecorderHost *host) {
             }
         }
         group->bus = gst_element_get_bus(group->pipeline);
+        storage_utc_now(group->timeline_origin_utc, sizeof(group->timeline_origin_utc));
+        safe_copy(group->writer.timeline_origin_utc,
+            sizeof(group->writer.timeline_origin_utc), group->timeline_origin_utc);
         group->started_tick_ms = GetTickCount64();
         state_result = gst_element_set_state(group->pipeline, GST_STATE_PLAYING);
         if (state_result == GST_STATE_CHANGE_FAILURE) return 0;
+        for (i = 0; i < group->session_count; i++) {
+            RecorderSession *session = &host->sessions[group->session_indices[i]];
+            audit_event(host, session, "MXF_TIMELINE_ORIGIN", group->timeline_origin_utc);
+        }
         g_print("SHARED MXF ARMED category=%s tracks=%d file=%s\n",
             group->category, group->session_count, group->output_final);
     }
@@ -831,9 +974,12 @@ static int open_bound_socket(const char *ip, int port, int type, int protocol, S
     SOCKET s;
     struct sockaddr_in addr;
     int reuse = 1;
+    int recvbuf = 131072;
     s = socket(AF_INET, type, protocol);
     if (s == INVALID_SOCKET) return 0;
     setsockopt(s, SOL_SOCKET, SO_REUSEADDR, (const char *)&reuse, sizeof(reuse));
+    if (type == SOCK_DGRAM)
+        setsockopt(s, SOL_SOCKET, SO_RCVBUF, (const char *)&recvbuf, sizeof(recvbuf));
     memset(&addr, 0, sizeof(addr));
     addr.sin_family = AF_INET;
     addr.sin_port = htons((u_short)port);
@@ -865,12 +1011,24 @@ static int init_session(RecorderHost *host, RecorderSession *session, int index)
     session->window_rotation_enabled = (!session->shared_group && session->rotate_after_pause_count > 0 && session->rotate_max_count > 0);
     session->rotations_completed = 0;
     session->windows_closed_complete = 0;
-    session->window_open_count = 1;
+    session->window_open_count = host->cfg.event_files_mode ? 0 : 1;
+    session->event_file_open = 0;
+    session->event_close_requested = 0;
+    session->event_rearm_requested = 0;
+    session->event_answered = 0;
+    session->event_sequence = 0;
+    session->event_materialize_requested = 0;
+    event_audio_buffer_init(&session->event_buffer);
+    session->interaction_id[0] = 0;
+    session->leg_id[0] = 0;
+    session->event_media_start_utc[0] = 0;
+    session->event_last_event_utc[0] = 0;
+    safe_copy(session->event_state, sizeof(session->event_state), host->cfg.event_files_mode ? "IDLE" : "N/A");
     derive_rotation_stem(session->cfg.output_final, session->rotation_stem, sizeof(session->rotation_stem));
     if (session->window_rotation_enabled) {
         build_segment_paths(session, session->cfg.segment_sequence);
     }
-    if (!session->shared_group) {
+    if (!session->shared_group && !host->cfg.event_files_mode) {
         if (!storage_writer_open(&session->writer,
             session->cfg.output_partial,
             session->cfg.output_final,
@@ -893,10 +1051,13 @@ static int init_session(RecorderHost *host, RecorderSession *session, int index)
     if (!open_bound_socket(host->cfg.bind_ip, session->cfg.rtp_port, SOCK_DGRAM, IPPROTO_UDP, &session->rtp_socket)) {
         g_printerr("Could not bind RTP route=%s %s:%d WSA=%d.\n", session->cfg.route_key, host->cfg.bind_ip, session->cfg.rtp_port, WSAGetLastError());
         if (session->pipeline) gst_element_set_state(session->pipeline, GST_STATE_NULL);
-        if (!session->shared_group) storage_writer_abort(&session->writer);
+        if (!session->shared_group && !host->cfg.event_files_mode) storage_writer_abort(&session->writer);
         return 0;
     }
-    audit_event(host, session, "NEXT_WINDOW_ARMED", "Session writer/pipeline/RTP socket prepared before RTSP traffic");
+    audit_event(host, session, "NEXT_WINDOW_ARMED",
+        host->cfg.event_files_mode
+            ? "Event route armed with RTP socket; MXF writer will be materialized from first accepted media timestamp"
+            : "Session writer/pipeline/RTP socket prepared before RTSP traffic");
     return 1;
 }
 
@@ -1013,12 +1174,372 @@ static int maybe_rotate_window_after_pause(RecorderSession *session) {
     return 1;
 }
 
+static void ensure_event_identity(RecorderSession *session) {
+    if (!session) return;
+    if (!session->interaction_id[0])
+        make_guid_string(session->interaction_id, sizeof(session->interaction_id));
+    if (!session->leg_id[0])
+        make_guid_string(session->leg_id, sizeof(session->leg_id));
+}
+
+static int open_event_file(RecorderSession *session) {
+    EventFileRequest request;
+    EventFilePaths paths;
+    char error_text[1024] = {0};
+    char detail[4096];
+
+    if (!session || !session->host || !session->host->cfg.event_files_mode)
+        return 0;
+    if (session->event_file_open) return 1;
+    if (session->event_close_requested) {
+        audit_event(session->host, session, "INTEGRITY_WARNING",
+            "Event file open requested while previous file is still queued for close");
+        return 0;
+    }
+
+    ensure_event_identity(session);
+    if (!session->event_media_start_utc[0])
+        storage_utc_now(session->event_media_start_utc,
+            sizeof(session->event_media_start_utc));
+
+    memset(&request, 0, sizeof(request));
+    request.recording_root = session->host->cfg.recording_root;
+    request.service_id = session->cfg.service_id;
+    request.endpoint_id = session->cfg.endpoint_id;
+    request.interaction_id = session->interaction_id;
+    request.leg_id = session->leg_id;
+    request.media_start_utc = session->event_media_start_utc;
+
+    if (!event_file_manager_build_paths(
+            &request, &paths, error_text, sizeof(error_text))) {
+        audit_event(session->host, session, "INTEGRITY_FAILURE", error_text);
+        return 0;
+    }
+
+    safe_copy(session->cfg.output_final, sizeof(session->cfg.output_final),
+        paths.final_path);
+    safe_copy(session->cfg.output_partial, sizeof(session->cfg.output_partial),
+        paths.partial_path);
+    safe_copy(session->cfg.lock_path, sizeof(session->cfg.lock_path),
+        paths.lock_path);
+    safe_copy(session->cfg.file_id, sizeof(session->cfg.file_id),
+        paths.file_id);
+    safe_copy(session->cfg.window_start_utc,
+        sizeof(session->cfg.window_start_utc),
+        session->event_media_start_utc);
+    session->cfg.segment_sequence = ++session->event_sequence;
+    make_guid_string(session->cfg.instance_uuid,
+        sizeof(session->cfg.instance_uuid));
+    session->pipeline_error = 0;
+    session->sink_error = 0;
+    storage_writer_init(&session->writer);
+
+    if (!storage_writer_open(&session->writer,
+            session->cfg.output_partial,
+            session->cfg.output_final,
+            session->cfg.lock_path,
+            session->cfg.file_id,
+            session->host->cfg.recorder_id,
+            session->cfg.window_start_utc,
+            session->cfg.segment_sequence,
+            error_text,
+            sizeof(error_text))) {
+        audit_event(session->host, session, "INTEGRITY_FAILURE", error_text);
+        return 0;
+    }
+    if (!build_pipeline(session)) {
+        audit_event(session->host, session, "INTEGRITY_FAILURE",
+            "Event-file MXF pipeline build failed");
+        storage_writer_abort(&session->writer);
+        return 0;
+    }
+
+    session->event_file_open = 1;
+    session->window_open_count++;
+    if (_stricmp(session->event_state, "IDLE") == 0 ||
+        _stricmp(session->event_state, "N/A") == 0) {
+        safe_copy(session->event_state, sizeof(session->event_state),
+            _stricmp(session->cfg.session_kind, "telephone") == 0
+                ? "RINGING" : "ACTIVE");
+    }
+    snprintf(detail, sizeof(detail),
+        "interaction_id=%s leg_id=%s media_start_utc=%s service=%s endpoint=%s final=%s",
+        session->interaction_id, session->leg_id,
+        session->event_media_start_utc, session->cfg.service_id,
+        session->cfg.endpoint_id, session->cfg.output_final);
+    audit_event(session->host, session, "EVENT_FILE_OPEN", detail);
+    return 1;
+}
+
+static int materialize_event_buffer(RecorderSession *session) {
+    unsigned int i;
+    if (!session || !session->host || !session->host->cfg.event_files_mode)
+        return 0;
+    if (!session->event_materialize_requested) return 1;
+    if (session->event_file_open) {
+        session->event_materialize_requested = 0;
+        event_audio_buffer_reset(&session->event_buffer);
+        return 1;
+    }
+    if (session->event_buffer.frame_count == 0) {
+        session->event_materialize_requested = 0;
+        return 1;
+    }
+
+    if (!session->event_media_start_utc[0] &&
+        session->event_buffer.first_ingress_utc[0]) {
+        safe_copy(session->event_media_start_utc,
+            sizeof(session->event_media_start_utc),
+            session->event_buffer.first_ingress_utc);
+    }
+    if (!open_event_file(session)) return 0;
+
+    if (!session->media_active) {
+        audit_media_boundary(session, "MEDIA_START",
+            "Buffered first RTP payload established event media origin");
+        session->media_active = 1;
+        session->media_intervals_started++;
+    }
+
+    for (i = 0; i < session->event_buffer.frame_count; i++) {
+        const EventAudioFrame *frame =
+            event_audio_buffer_frame(&session->event_buffer, i);
+        if (!frame) return 0;
+        if (!push_rtp_payload(session,
+                session->event_buffer.data + frame->offset,
+                (int)frame->length,
+                (guint32)frame->rtp_timestamp)) {
+            audit_event(session->host, session, "INTEGRITY_FAILURE",
+                "Buffered event RTP could not be pushed to MXF pipeline");
+            session->pipeline_error = 1;
+            return 0;
+        }
+        session->rtp_packets_recorded++;
+        session->rtp_payload_bytes_recorded += frame->length;
+    }
+
+    session->event_materialize_requested = 0;
+    event_audio_buffer_reset(&session->event_buffer);
+    audit_event(session->host, session, "EVENT_BUFFER_DRAINED",
+        "Ingress buffer drained after event MXF materialization");
+    return 1;
+}
+
+static int process_event_materializations(RecorderHost *host, int budget) {
+    int i, processed = 0;
+    if (!host || !host->cfg.event_files_mode) return 1;
+    if (budget <= 0) budget = 1;
+    for (i = 0; i < host->session_count && processed < budget; i++) {
+        RecorderSession *session = &host->sessions[i];
+        if (!session->event_materialize_requested) continue;
+        if (!materialize_event_buffer(session)) {
+            host->server_failed = 1;
+            return 0;
+        }
+        processed++;
+    }
+    return 1;
+}
+
+static int drain_pending_event_rtp(RecorderSession *session, int max_packets) {
+    int drained = 0;
+    if (!session || session->rtp_socket == INVALID_SOCKET) return 1;
+    if (max_packets <= 0) max_packets = 8192;
+
+    while (drained < max_packets) {
+        fd_set readfds;
+        struct timeval tv;
+        unsigned char packet[RTP_PACKET_MAX];
+        int selected, n;
+
+        FD_ZERO(&readfds);
+        FD_SET(session->rtp_socket, &readfds);
+        tv.tv_sec = 0;
+        tv.tv_usec = 0;
+        selected = select(0, &readfds, NULL, NULL, &tv);
+        if (selected == SOCKET_ERROR) {
+            audit_event(session->host, session, "INTEGRITY_FAILURE",
+                "select() failed while draining pending RTP before event close");
+            return 0;
+        }
+        if (selected == 0 || !FD_ISSET(session->rtp_socket, &readfds))
+            break;
+
+        n = recvfrom(session->rtp_socket, (char *)packet,
+            sizeof(packet), 0, NULL, NULL);
+        if (n <= 0)
+            break;
+        if (!handle_rtp_packet(session, packet, n))
+            return 0;
+        drained++;
+    }
+
+    if (drained > 0) {
+        char detail[256];
+        snprintf(detail, sizeof(detail),
+            "Drained pending RTP packets before event close packets=%d",
+            drained);
+        audit_event(session->host, session, "RTP_DRAIN_BEFORE_CLOSE", detail);
+    }
+    return 1;
+}
+
+static void request_event_file_close(
+    RecorderSession *session,
+    const char *reason,
+    const char *event_utc) {
+
+    if (!session || !session->host || !session->host->cfg.event_files_mode)
+        return;
+    if (event_utc && *event_utc)
+        safe_copy(session->event_last_event_utc,
+            sizeof(session->event_last_event_utc), event_utc);
+    else
+        storage_utc_now(session->event_last_event_utc,
+            sizeof(session->event_last_event_utc));
+
+    /*
+     * RTSP control and UDP media are multiplexed by the same host loop.
+     * A HANGUP/PAUSE/TEARDOWN request can therefore be serviced while RTP
+     * datagrams that arrived earlier are still queued in the UDP socket.
+     * Drain those already-arrived datagrams while the media gate is still
+     * open so control-plane ordering cannot discard accepted media.
+     */
+    if (session->recording &&
+        !drain_pending_event_rtp(session, 8192)) {
+        audit_event(session->host, session, "INTEGRITY_FAILURE",
+            "Could not drain pending RTP before event close");
+    }
+
+    session->recording = 0;
+    if (session->media_active) {
+        audit_media_boundary(session, "MEDIA_END",
+            reason ? reason : "Event boundary closed media");
+        session->media_active = 0;
+        session->media_intervals_closed++;
+    }
+    session->event_close_requested = 1;
+    if (_stricmp(session->event_state, "RING_NOT_ANSWERED") != 0 &&
+        _stricmp(session->event_state, "HANGUP") != 0)
+        safe_copy(session->event_state, sizeof(session->event_state),
+            "FINALIZING");
+    audit_event(session->host, session, "EVENT_FILE_CLOSE_QUEUED",
+        reason ? reason : "Event-file close queued");
+}
+
+static int close_event_file_now(RecorderSession *session, const char *reason) {
+    int ok = 1;
+    char detail[4096];
+
+    if (!session || !session->host || !session->host->cfg.event_files_mode)
+        return 0;
+
+    if (session->event_file_open) {
+        ok = close_current_window_only(session,
+            reason ? reason : "Event-file lifecycle close");
+        session->event_file_open = 0;
+    }
+    session->event_close_requested = 0;
+
+    snprintf(detail, sizeof(detail),
+        "interaction_id=%s leg_id=%s media_start_utc=%s event_utc=%s final=%s result=%s",
+        session->interaction_id, session->leg_id,
+        session->event_media_start_utc, session->event_last_event_utc,
+        session->cfg.output_final, ok ? "CLOSED_COMPLETE" : "RECOVERY_REQUIRED");
+    audit_event(session->host, session,
+        ok ? "EVENT_FILE_CLOSED" : "EVENT_FILE_CLOSE_FAILED", detail);
+    if (_stricmp(session->event_state, "RING_NOT_ANSWERED") != 0 &&
+        _stricmp(session->event_state, "HANGUP") != 0)
+        safe_copy(session->event_state, sizeof(session->event_state),
+            ok ? "CLOSED" : "RECOVERY_REQUIRED");
+    return ok;
+}
+
+static void rearm_event_route(RecorderSession *session, const char *reason) {
+    if (!session || !session->host || !session->host->cfg.event_files_mode)
+        return;
+    session->announced = 0;
+    session->setup_done = 0;
+    session->recording = 0;
+    session->media_active = 0;
+    session->service_enabled = 0;
+    session->teardown_received = 0;
+    session->first_rtp_timestamp_valid = 0;
+    session->last_timestamp_valid = 0;
+    session->last_sequence_valid = 0;
+    session->last_payload_len = 0;
+    session->event_answered = 0;
+    session->event_rearm_requested = 0;
+    session->event_materialize_requested = 0;
+    event_audio_buffer_reset(&session->event_buffer);
+    session->interaction_id[0] = 0;
+    session->leg_id[0] = 0;
+    session->event_media_start_utc[0] = 0;
+    session->event_last_event_utc[0] = 0;
+    safe_copy(session->event_state, sizeof(session->event_state), "IDLE");
+    snprintf(session->session_id, sizeof(session->session_id),
+        "P5-%lu-%02d-%llu",
+        (unsigned long)GetCurrentProcessId(),
+        (int)(session - session->host->sessions) + 1,
+        (unsigned long long)GetTickCount64());
+    audit_event(session->host, session, "ROUTE_REARMED",
+        reason ? reason : "Event route rearmed for next interaction");
+}
+
+static int process_event_file_closures(RecorderHost *host, int budget) {
+    int i, processed = 0;
+    if (!host || !host->cfg.event_files_mode) return 1;
+    if (budget <= 0) budget = 1;
+
+    for (i = 0; i < host->session_count && processed < budget; i++) {
+        RecorderSession *session = &host->sessions[i];
+        if (!session->event_close_requested) continue;
+        if (!close_event_file_now(session, "Deferred event-file finalization")) {
+            host->server_failed = 1;
+            return 0;
+        }
+        processed++;
+        if (session->event_rearm_requested)
+            rearm_event_route(session,
+                "Event file finalized and route became reusable");
+    }
+    return 1;
+}
+
 static int finalize_session(RecorderSession *session, const char *reason) {
     GstFlowReturn flow = GST_FLOW_ERROR;
     GstMessage *msg = NULL;
     int ok = 1;
     char error_text[1024] = {0};
     if (!session || session->finalized) return session ? session->final_ok : 0;
+    if (session->host && session->host->cfg.event_files_mode) {
+        if (session->event_materialize_requested) {
+            if (!materialize_event_buffer(session))
+                ok = 0;
+        }
+        if (session->media_active) {
+            audit_media_boundary(session, "MEDIA_END",
+                reason ? reason : "Host finalization closed event media");
+            session->media_active = 0;
+            session->media_intervals_closed++;
+        }
+        session->recording = 0;
+        if (session->event_file_open || session->event_close_requested) {
+            if (!session->event_last_event_utc[0])
+                storage_utc_now(session->event_last_event_utc,
+                    sizeof(session->event_last_event_utc));
+            ok = close_event_file_now(session,
+                reason ? reason : "Host shutdown finalized event file");
+        }
+        if (session->rtp_socket != INVALID_SOCKET) {
+            closesocket(session->rtp_socket);
+            session->rtp_socket = INVALID_SOCKET;
+        }
+        session->finalized = 1;
+        session->final_ok = ok;
+        session->failed = !ok;
+        return ok;
+    }
     if (session->media_active) {
         audit_media_boundary(session, "MEDIA_END", reason ? reason : "Session finalization closed media interval");
         session->media_active = 0;
@@ -1136,7 +1657,9 @@ static void abort_session(RecorderSession *session, const char *reason) {
         return;
     }
     if (session->pipeline) gst_element_set_state(session->pipeline, GST_STATE_NULL);
-    storage_writer_abort(&session->writer);
+    if (!session->host->cfg.event_files_mode || session->event_file_open)
+        storage_writer_abort(&session->writer);
+    session->event_file_open = 0;
     if (session->rtp_socket != INVALID_SOCKET) closesocket(session->rtp_socket);
     session->rtp_socket = INVALID_SOCKET;
     destroy_pipeline(session);
@@ -1197,6 +1720,38 @@ static int get_header_value(const char *request, const char *header, char *out, 
     memcpy(out, p, len);
     out[len] = 0;
     return 1;
+}
+
+static void capture_event_metadata(RecorderSession *session, const char *request) {
+    char value[512] = {0};
+    if (!session || !session->host || !session->host->cfg.event_files_mode)
+        return;
+
+    if (get_header_value(request, "X-Interaction-Id", value, sizeof(value)) && value[0])
+        safe_copy(session->interaction_id, sizeof(session->interaction_id), value);
+    if (get_header_value(request, "X-Leg-Id", value, sizeof(value)) && value[0])
+        safe_copy(session->leg_id, sizeof(session->leg_id), value);
+    if (!session->event_file_open &&
+        get_header_value(request, "X-Media-Start-Utc", value, sizeof(value)) &&
+        value[0])
+        safe_copy(session->event_media_start_utc,
+            sizeof(session->event_media_start_utc), value);
+    if (get_header_value(request, "X-Event-Utc", value, sizeof(value)) && value[0])
+        safe_copy(session->event_last_event_utc,
+            sizeof(session->event_last_event_utc), value);
+
+    if (get_header_value(request, "X-Audio-Event", value, sizeof(value)) && value[0]) {
+        if (_stricmp(value, "RING") == 0)
+            safe_copy(session->event_state, sizeof(session->event_state), "RINGING");
+        else if (_stricmp(value, "ANSWER") == 0)
+            safe_copy(session->event_state, sizeof(session->event_state), "IN_CALL");
+        else if (_stricmp(value, "HANGUP") == 0)
+            safe_copy(session->event_state, sizeof(session->event_state), "HANGUP");
+        else if (_stricmp(value, "RADIO_ACTIVATED") == 0)
+            safe_copy(session->event_state, sizeof(session->event_state), "ACTIVE");
+    }
+
+    ensure_event_identity(session);
 }
 
 static int parse_content_length(const char *headers) {
@@ -1305,7 +1860,7 @@ static int handle_rtsp_request(RecorderHost *host, ClientConnection *client, cha
     }
     get_header_value(request, "CSeq", cseq, sizeof(cseq));
     if (_stricmp(method, "OPTIONS") == 0) {
-        snprintf(extra, sizeof(extra), "Public: OPTIONS, ANNOUNCE, SETUP, RECORD, PAUSE, GET_PARAMETER, TEARDOWN\r\n");
+        snprintf(extra, sizeof(extra), "Public: OPTIONS, ANNOUNCE, SETUP, RECORD, PAUSE, GET_PARAMETER, SET_PARAMETER, TEARDOWN\r\n");
         return send_rtsp_response(client->socket, 200, "OK", cseq, session ? session->session_id : NULL, extra);
     }
     if (_stricmp(method, "ANNOUNCE") == 0) {
@@ -1326,6 +1881,8 @@ static int handle_rtsp_request(RecorderHost *host, ClientConnection *client, cha
         client->session = session;
         session->client_index = (int)(client - host->clients);
         session->announced = 1;
+        if (host->cfg.event_files_mode)
+            capture_event_metadata(session, request);
         snprintf(detail, sizeof(detail), "ANNOUNCE route=%s uri=%s service=%s endpoint=%s media_flow=%s rtp_port=%d",
             session->cfg.route_key, uri, session->cfg.service_id, session->cfg.endpoint_id, session->cfg.media_flow, session->cfg.rtp_port);
         audit_event(host, session, "SESSION_OPEN", detail);
@@ -1352,10 +1909,29 @@ static int handle_rtsp_request(RecorderHost *host, ClientConnection *client, cha
     }
     if (_stricmp(method, "RECORD") == 0) {
         if (!session->setup_done) return send_rtsp_response(client->socket, 455, "Method Not Valid in This State", cseq, session->session_id, NULL);
+        if (host->cfg.event_files_mode) {
+            capture_event_metadata(session, request);
+            if (session->event_close_requested) {
+                if (!close_event_file_now(session, "Previous event closed before next RECORD")) {
+                    host->server_failed = 1;
+                    return send_rtsp_response(client->socket, 500, "Internal Server Error", cseq, session->session_id, NULL);
+                }
+            }
+            if (!session->event_file_open && session->event_sequence > 0) {
+                session->event_media_start_utc[0] = 0;
+                session->event_last_event_utc[0] = 0;
+                ensure_event_identity(session);
+                safe_copy(session->event_state, sizeof(session->event_state),
+                    _stricmp(session->cfg.session_kind, "telephone") == 0 ? "RINGING" : "ACTIVE");
+            }
+        }
         if (!session->recording) {
             session->recording = 1;
             session->record_commands++;
-            audit_event(host, session, "RECORD", "Media gate opened on isolated session route");
+            audit_event(host, session, "RECORD",
+                host->cfg.event_files_mode
+                    ? "Event leg armed; first accepted RTP packet will timestamp and materialize the MXF"
+                    : "Media gate opened on isolated session route");
             audit_activity_signal(session, 1);
         }
         return send_rtsp_response(client->socket, 200, "OK", cseq, session->session_id, NULL);
@@ -1372,11 +1948,61 @@ static int handle_rtsp_request(RecorderHost *host, ClientConnection *client, cha
             }
             audit_activity_signal(session, 0);
             audit_event(host, session, "PAUSE", "Media gate closed without affecting other sessions");
-            if (!maybe_rotate_window_after_pause(session)) {
+            if (host->cfg.event_files_mode) {
+                if (!session->event_last_event_utc[0])
+                    storage_utc_now(session->event_last_event_utc,
+                        sizeof(session->event_last_event_utc));
+                request_event_file_close(session,
+                    "PAUSE ended event recording", session->event_last_event_utc);
+            } else if (!maybe_rotate_window_after_pause(session)) {
                 host->server_failed = 1;
                 audit_event(host, session, "INTEGRITY_FAILURE", "Window rotation failed at PAUSE boundary");
                 return send_rtsp_response(client->socket, 500, "Internal Server Error", cseq, session->session_id, NULL);
             }
+        }
+        return send_rtsp_response(client->socket, 200, "OK", cseq, session->session_id, NULL);
+    }
+    if (_stricmp(method, "SET_PARAMETER") == 0) {
+        char event_name[128] = {0};
+        int i;
+        if (!session->setup_done) return send_rtsp_response(client->socket, 455, "Method Not Valid in This State", cseq, session->session_id, NULL);
+        if (!host->cfg.event_files_mode)
+            return send_rtsp_response(client->socket, 200, "OK", cseq, session->session_id, NULL);
+
+        capture_event_metadata(session, request);
+        get_header_value(request, "X-Audio-Event", event_name, sizeof(event_name));
+        if (!session->event_last_event_utc[0])
+            storage_utc_now(session->event_last_event_utc,
+                sizeof(session->event_last_event_utc));
+
+        if (_stricmp(event_name, "ANSWER") == 0) {
+            session->event_answered = 1;
+            safe_copy(session->event_state, sizeof(session->event_state), "IN_CALL");
+            audit_event(host, session, "ANSWER",
+                "This leg answered; sibling ringing legs for the same interaction will stop accepting media and finalize");
+
+            for (i = 0; i < host->session_count; i++) {
+                RecorderSession *other = &host->sessions[i];
+                if (other == session || !other->interaction_id[0]) continue;
+                if (_stricmp(other->interaction_id, session->interaction_id) != 0) continue;
+                if (!other->event_file_open && !other->recording) continue;
+                safe_copy(other->event_state, sizeof(other->event_state), "RING_NOT_ANSWERED");
+                request_event_file_close(other,
+                    "Sibling leg answered this interaction",
+                    session->event_last_event_utc);
+            }
+        } else if (_stricmp(event_name, "HANGUP") == 0) {
+            safe_copy(session->event_state, sizeof(session->event_state), "HANGUP");
+            request_event_file_close(session, "HANGUP ended event recording",
+                session->event_last_event_utc);
+        } else if (_stricmp(event_name, "RING") == 0) {
+            safe_copy(session->event_state, sizeof(session->event_state), "RINGING");
+            audit_event(host, session, "RING", "Telephone ringing leg signaled");
+        } else if (_stricmp(event_name, "RADIO_ACTIVATED") == 0) {
+            safe_copy(session->event_state, sizeof(session->event_state), "ACTIVE");
+            audit_event(host, session, "RADIO_ACTIVATED", "Radio event leg signaled");
+        } else if (event_name[0]) {
+            audit_event(host, session, "EVENT_SIGNAL", event_name);
         }
         return send_rtsp_response(client->socket, 200, "OK", cseq, session->session_id, NULL);
     }
@@ -1408,6 +2034,19 @@ static int handle_rtsp_request(RecorderHost *host, ClientConnection *client, cha
         send_rtsp_response(client->socket, 200, "OK", cseq, session->session_id, NULL);
         if (session->shared_group) {
             rearm_shared_route(session, "TEARDOWN released reusable shared-MXF route");
+        } else if (host->cfg.event_files_mode) {
+            if (session->event_file_open || session->event_materialize_requested ||
+                session->event_close_requested) {
+                if (!session->event_last_event_utc[0])
+                    storage_utc_now(session->event_last_event_utc,
+                        sizeof(session->event_last_event_utc));
+                request_event_file_close(session,
+                    "TEARDOWN ended event leg", session->event_last_event_utc);
+                session->event_rearm_requested = 1;
+            } else {
+                rearm_event_route(session,
+                    "TEARDOWN released already-finalized event route");
+            }
         } else {
             if (!begin_finalize_session(session, "TEARDOWN finalized only this session route")) host->server_failed = 1;
         }
@@ -1425,29 +2064,142 @@ static guint64 shared_group_now_ns(SharedMuxGroup *group) {
 }
 
 static int push_shared_gap_buffer(RecorderSession *session, guint64 target_ns) {
-    GstBuffer *gap;
-    GstFlowReturn flow = GST_FLOW_ERROR;
-    guint64 start_ns, duration_ns;
+    guint64 start_ns;
 
     if (!session || !session->appsrc || !session->shared_group) return 0;
     start_ns = session->shared_timeline_position_ns;
     if (target_ns <= start_ns) return 1;
 
-    duration_ns = target_ns - start_ns;
-    gap = gst_buffer_new();
-    if (!gap) return 0;
+    /*
+     * mxf_alaw_write_func maps every GAP buffer to exactly one zero-payload
+     * structural edit unit. Its A-law edit rate is 10/1 (100 ms), so never
+     * send an arbitrary-duration GAP here: doing so would make one KLV claim
+     * e.g. 20 ms of source time while pad->pos advances a full 100 ms.
+     *
+     * Accumulate sub-edit-unit wall-clock progress and emit only complete
+     * 100 ms units. Any remainder stays pending in shared_timeline_position_ns
+     * until later media/gap progress reaches the next structural boundary.
+     */
+    while (target_ns - start_ns >= SHARED_MXF_AUDIO_EDIT_UNIT_NS) {
+        GstBuffer *gap = gst_buffer_new();
+        GstFlowReturn flow = GST_FLOW_ERROR;
+        if (!gap) return 0;
 
-    GST_BUFFER_PTS(gap) = start_ns;
-    GST_BUFFER_DTS(gap) = GST_CLOCK_TIME_NONE;
-    GST_BUFFER_DURATION(gap) = duration_ns;
-    GST_BUFFER_FLAG_SET(gap, GST_BUFFER_FLAG_GAP);
-    GST_BUFFER_FLAG_SET(gap, GST_BUFFER_FLAG_DROPPABLE);
+        GST_BUFFER_PTS(gap) = start_ns;
+        GST_BUFFER_DTS(gap) = GST_CLOCK_TIME_NONE;
+        GST_BUFFER_DURATION(gap) = SHARED_MXF_AUDIO_EDIT_UNIT_NS;
+        GST_BUFFER_FLAG_SET(gap, GST_BUFFER_FLAG_GAP);
+        GST_BUFFER_FLAG_SET(gap, GST_BUFFER_FLAG_DROPPABLE);
 
-    g_signal_emit_by_name(session->appsrc, "push-buffer", gap, &flow);
-    gst_buffer_unref(gap);
+        g_signal_emit_by_name(session->appsrc, "push-buffer", gap, &flow);
+        gst_buffer_unref(gap);
+        if (flow != GST_FLOW_OK) return 0;
 
-    if (flow != GST_FLOW_OK) return 0;
-    session->shared_timeline_position_ns = target_ns;
+        session->shared_samples_queued += SHARED_MXF_AUDIO_SAMPLES_PER_EDIT_UNIT;
+        start_ns += SHARED_MXF_AUDIO_EDIT_UNIT_NS;
+        session->shared_timeline_position_ns = start_ns;
+    }
+    return 1;
+}
+
+static int push_shared_structural_samples(
+    RecorderSession *session,
+    unsigned long long sample_count
+) {
+    while (sample_count > 0) {
+        unsigned long long chunk =
+            sample_count > SHARED_MXF_AUDIO_SAMPLES_PER_EDIT_UNIT
+                ? SHARED_MXF_AUDIO_SAMPLES_PER_EDIT_UNIT
+                : sample_count;
+        GstBuffer *gap;
+        GstFlowReturn flow = GST_FLOW_ERROR;
+        guint64 duration_ns;
+
+        if (!session || !session->appsrc || !session->shared_group)
+            return 0;
+        gap = gst_buffer_new();
+        if (!gap) return 0;
+
+        duration_ns = gst_util_uint64_scale(
+            (guint64)chunk, GST_SECOND, 8000);
+
+        GST_BUFFER_PTS(gap) = session->shared_timeline_position_ns;
+        GST_BUFFER_DTS(gap) = GST_CLOCK_TIME_NONE;
+        GST_BUFFER_DURATION(gap) = duration_ns;
+        GST_BUFFER_FLAG_SET(gap, GST_BUFFER_FLAG_GAP);
+        GST_BUFFER_FLAG_SET(gap, GST_BUFFER_FLAG_DROPPABLE);
+
+        g_signal_emit_by_name(session->appsrc, "push-buffer", gap, &flow);
+        gst_buffer_unref(gap);
+        if (flow != GST_FLOW_OK) return 0;
+
+        session->shared_samples_queued += chunk;
+        session->shared_timeline_position_ns += duration_ns;
+        sample_count -= chunk;
+    }
+    return 1;
+}
+
+static int align_shared_group_tail(SharedMuxGroup *group) {
+    unsigned long long target_samples = 0;
+    unsigned long long edit_units;
+    int i;
+    char detail[512];
+
+    if (!group || !group->host || group->finalized) return 1;
+
+    for (i = 0; i < group->session_count; i++) {
+        RecorderSession *session =
+            &group->host->sessions[group->session_indices[i]];
+        if (session->shared_samples_queued > target_samples)
+            target_samples = session->shared_samples_queued;
+    }
+
+    if (target_samples == 0) return 1;
+
+    edit_units =
+        (target_samples + SHARED_MXF_AUDIO_SAMPLES_PER_EDIT_UNIT - 1) /
+        SHARED_MXF_AUDIO_SAMPLES_PER_EDIT_UNIT;
+    target_samples = edit_units * SHARED_MXF_AUDIO_SAMPLES_PER_EDIT_UNIT;
+
+    for (i = 0; i < group->session_count; i++) {
+        RecorderSession *session =
+            &group->host->sessions[group->session_indices[i]];
+        unsigned long long missing;
+
+        if (session->finalized) continue;
+        if (session->shared_samples_queued > target_samples) {
+            audit_event(group->host, session, "INTEGRITY_FAILURE",
+                "Shared MXF sample counter exceeded common close target");
+            return 0;
+        }
+
+        missing = target_samples - session->shared_samples_queued;
+        if (missing > 0 &&
+            !push_shared_structural_samples(session, missing)) {
+            audit_event(group->host, session, "INTEGRITY_FAILURE",
+                "Could not align shared-MXF tail with structural A-law padding");
+            return 0;
+        }
+    }
+
+    snprintf(detail, sizeof(detail),
+        "category=%s target_samples=%llu edit_units=%llu tracks=%d",
+        group->category,
+        target_samples,
+        edit_units,
+        group->session_count);
+    audit_event(group->host, NULL, "SHARED_MXF_TAIL_ALIGNED", detail);
+    return 1;
+}
+
+static int align_all_shared_group_tails(RecorderHost *host) {
+    int g;
+    if (!host || !host->cfg.shared_mxf_by_output) return 1;
+    for (g = 0; g < host->shared_group_count; g++) {
+        if (!align_shared_group_tail(&host->shared_groups[g]))
+            return 0;
+    }
     return 1;
 }
 
@@ -1532,6 +2284,7 @@ static int push_rtp_payload(RecorderSession *session, const unsigned char *paylo
 
     if (flow == GST_FLOW_OK && session->shared_group) {
         session->media_samples_written += (unsigned long long)payload_len;
+        session->shared_samples_queued += (unsigned long long)payload_len;
         session->shared_timeline_position_ns = end_ns;
     }
     return flow == GST_FLOW_OK;
@@ -1653,6 +2406,25 @@ static int handle_rtp_packet(RecorderSession *session, unsigned char *packet, in
         session->rtp_packets_ignored_not_recording++;
         return 1;
     }
+    if (session->host->cfg.event_files_mode && !session->event_file_open) {
+        char ingress_utc[64];
+        storage_utc_now(ingress_utc, sizeof(ingress_utc));
+        if (!event_audio_buffer_push(&session->event_buffer,
+                packet + offset, (unsigned int)payload_len, ts, ingress_utc)) {
+            audit_event(session->host, session, "INTEGRITY_FAILURE",
+                "Event ingress buffer exhausted before MXF materialization");
+            return 0;
+        }
+        if (!session->event_media_start_utc[0])
+            safe_copy(session->event_media_start_utc,
+                sizeof(session->event_media_start_utc),
+                session->event_buffer.first_ingress_utc);
+        session->event_materialize_requested = 1;
+        if (session->event_buffer.frame_count == 1)
+            audit_event(session->host, session, "MEDIA_INGRESS_ORIGIN",
+                "media_start_utc fixed before filesystem/MXF work; payload buffered for deferred materialization");
+        return 1;
+    }
     if (!session->media_active) {
         audit_media_boundary(session, "MEDIA_START", "First RTP payload accepted on route after RECORD");
         session->media_active = 1;
@@ -1697,6 +2469,14 @@ static void close_client(RecorderHost *host, int index, int unexpected) {
             audit_event(host, session, "CONNECTION_LOST",
                 "RTSP client disconnected; shared MXF route was rearmed without closing the category writer");
             rearm_shared_route(session, "Unexpected disconnect released reusable shared-MXF route");
+        } else if (host->cfg.event_files_mode) {
+            if (!session->event_last_event_utc[0])
+                storage_utc_now(session->event_last_event_utc,
+                    sizeof(session->event_last_event_utc));
+            request_event_file_close(session,
+                "Unexpected RTSP disconnect ended event leg",
+                session->event_last_event_utc);
+            session->event_rearm_requested = 1;
         } else {
             abort_session(session, "RTSP TCP connection closed without TEARDOWN; route moved to recovery-required state");
             host->server_failed = 1;
@@ -1727,17 +2507,29 @@ static int accept_client(RecorderHost *host) {
 static void write_ready_file(RecorderHost *host) {
     FILE *fp;
     char now[64];
+    char e_now[128], e_bind_ip[128];
     int i;
     if (!host || !host->cfg.ready_file[0]) return;
     fp = fopen(host->cfg.ready_file, "wb");
     if (!fp) return;
     storage_utc_now(now, sizeof(now));
-    fprintf(fp, "{\n  \"ready\": true,\n  \"schema\": \"recorder-poc.multisession-ready.v1\",\n  \"ts_utc\": \"%s\",\n  \"bind_ip\": \"%s\",\n  \"rtsp_port\": %d,\n  \"session_count\": %d,\n  \"sessions\": [\n", now, host->cfg.bind_ip, host->cfg.rtsp_port, host->session_count);
+    json_escape(now, e_now, sizeof(e_now));
+    json_escape(host->cfg.bind_ip, e_bind_ip, sizeof(e_bind_ip));
+    fprintf(fp, "{\n  \"ready\": true,\n  \"schema\": \"recorder-poc.multisession-ready.v1\",\n  \"ts_utc\": \"%s\",\n  \"bind_ip\": \"%s\",\n  \"rtsp_port\": %d,\n  \"session_count\": %d,\n  \"sessions\": [\n",
+        e_now, e_bind_ip, host->cfg.rtsp_port, host->session_count);
     for (i = 0; i < host->session_count; i++) {
         RecorderSession *s = &host->sessions[i];
+        char e_route[1024], e_logical[256], e_instance[256];
+        char e_file[256], e_kind[128], e_output[8192];
+        json_escape(s->cfg.route_key, e_route, sizeof(e_route));
+        json_escape(s->cfg.logical_uuid, e_logical, sizeof(e_logical));
+        json_escape(s->cfg.instance_uuid, e_instance, sizeof(e_instance));
+        json_escape(s->cfg.file_id, e_file, sizeof(e_file));
+        json_escape(s->cfg.session_kind, e_kind, sizeof(e_kind));
+        json_escape(s->cfg.output_final, e_output, sizeof(e_output));
         fprintf(fp, "    {\"route_key\":\"%s\",\"rtp_port\":%d,\"logical_track_uuid\":\"%s\",\"track_instance_uuid\":\"%s\",\"file_id\":\"%s\",\"track_index\":%d,\"category\":\"%s\",\"output_final\":\"%s\"}%s\n",
-            s->cfg.route_key, s->cfg.rtp_port, s->cfg.logical_uuid, s->cfg.instance_uuid,
-            s->cfg.file_id, s->track_index, s->cfg.session_kind, s->cfg.output_final,
+            e_route, s->cfg.rtp_port, e_logical, e_instance,
+            e_file, s->track_index, e_kind, e_output,
             i + 1 == host->session_count ? "" : ",");
     }
     fprintf(fp, "  ]\n}\n");
@@ -1864,16 +2656,34 @@ static int run_server(RecorderHost *host) {
                 }
             }
         }
+        if (host->cfg.event_files_mode &&
+            !process_event_materializations(host, 64))
+            return 0;
+        if (host->cfg.event_files_mode &&
+            !process_event_file_closures(host, 32))
+            return 0;
         if (all_sessions_finalized(host)) host->shutdown_requested = 1;
 
         if (!timeout_finalization_started && shutdown_requested_by_file(host)) {
             timeout_finalization_started = 1;
             audit_event(host, NULL, "SHUTDOWN_REQUESTED",
                 "External shutdown requested; gracefully finalizing every active recorder route");
+            if (host->cfg.shared_mxf_by_output &&
+                !align_all_shared_group_tails(host)) {
+                audit_event(host, NULL, "INTEGRITY_FAILURE",
+                    "Could not align shared-MXF tracks before external shutdown");
+                host->server_failed = 1;
+            }
             for (i = 0; i < host->session_count; i++) {
                 if (!host->sessions[i].finalized && host->sessions[i].finalize_state == 0) {
-                    begin_finalize_session(&host->sessions[i],
-                        "External recorder shutdown requested");
+                    if (host->cfg.event_files_mode) {
+                        if (!finalize_session(&host->sessions[i],
+                                "External recorder shutdown requested"))
+                            host->server_failed = 1;
+                    } else {
+                        begin_finalize_session(&host->sessions[i],
+                            "External recorder shutdown requested");
+                    }
                 }
             }
         }
@@ -1887,6 +2697,11 @@ static int run_server(RecorderHost *host) {
                     "Topology revision changed current=%llu requested=%llu; closing shared MXF window",
                     host->cfg.topology_revision, requested_revision);
                 audit_event(host, NULL, "TOPOLOGY_CHANGE_ROTATION", detail);
+                if (!align_all_shared_group_tails(host)) {
+                    audit_event(host, NULL, "INTEGRITY_FAILURE",
+                        "Could not align shared-MXF tracks before topology rotation");
+                    host->server_failed = 1;
+                }
                 for (i = 0; i < host->session_count; i++) {
                     if (!host->sessions[i].finalized && host->sessions[i].finalize_state == 0) {
                         begin_finalize_session(&host->sessions[i], "Topology change requested shared MXF rollover");
@@ -1901,13 +2716,25 @@ static int run_server(RecorderHost *host) {
                 host->cfg.shared_mxf_by_output
                     ? "Scheduled shared-MXF window boundary reached; remaining routes queued for normal finalization"
                     : "Recorder host max-seconds timeout reached; remaining routes queued for finalization");
+            if (host->cfg.shared_mxf_by_output &&
+                !align_all_shared_group_tails(host)) {
+                audit_event(host, NULL, "INTEGRITY_FAILURE",
+                    "Could not align shared-MXF tracks before scheduled close");
+                host->server_failed = 1;
+            }
             for (i = 0; i < host->session_count; i++) {
                 if (!host->sessions[i].finalized && host->sessions[i].finalize_state == 0) {
-                    begin_finalize_session(&host->sessions[i],
-                        host->cfg.shared_mxf_by_output
-                            ? "Scheduled recording window rotation"
-                            : "Host timeout finalized remaining session");
-                    if (!host->cfg.shared_mxf_by_output) host->server_failed = 1;
+                    if (host->cfg.event_files_mode) {
+                        if (!finalize_session(&host->sessions[i],
+                                "Host timeout finalized event route"))
+                            host->server_failed = 1;
+                    } else {
+                        begin_finalize_session(&host->sessions[i],
+                            host->cfg.shared_mxf_by_output
+                                ? "Scheduled recording window rotation"
+                                : "Host timeout finalized remaining session");
+                        if (!host->cfg.shared_mxf_by_output) host->server_failed = 1;
+                    }
                 }
             }
         }
@@ -1937,16 +2764,16 @@ static void print_summaries(RecorderHost *host) {
         received += s->rtp_packets_received;
         recorded += s->rtp_packets_recorded;
         ignored += s->rtp_packets_ignored_not_recording;
-        g_print("RECORDER SESSION SUMMARY route=%s session=%s packets_received=%llu packets_recorded=%llu payload_bytes=%llu sequence_gap_packets=%llu duplicates=%llu out_of_order=%llu malformed=%llu wrong_pt=%llu timestamp_discontinuities=%llu timestamp_gap_samples=%llu mux_bytes=%llu final=%s record_commands=%u pause_commands=%u keepalives=%u media_intervals_started=%u media_intervals_closed=%u packets_ignored_not_recording=%llu teardown=%d window_open_count=%d windows_closed_complete=%d rotations_completed=%d segment_sequence=%u\n",
+        g_print("RECORDER SESSION SUMMARY route=%s session=%s packets_received=%llu packets_recorded=%llu payload_bytes=%llu shared_samples_queued=%llu sequence_gap_packets=%llu duplicates=%llu out_of_order=%llu malformed=%llu wrong_pt=%llu timestamp_discontinuities=%llu timestamp_gap_samples=%llu mux_bytes=%llu final=%s record_commands=%u pause_commands=%u keepalives=%u media_intervals_started=%u media_intervals_closed=%u packets_ignored_not_recording=%llu teardown=%d window_open_count=%d windows_closed_complete=%d rotations_completed=%d segment_sequence=%u\n",
             s->cfg.route_key, s->session_id, s->rtp_packets_received, s->rtp_packets_recorded, s->rtp_payload_bytes_recorded,
-            s->rtp_sequence_gap_packets, s->rtp_packets_duplicate, s->rtp_packets_out_of_order, s->rtp_packets_malformed,
+            s->shared_samples_queued, s->rtp_sequence_gap_packets, s->rtp_packets_duplicate, s->rtp_packets_out_of_order, s->rtp_packets_malformed,
             s->rtp_packets_wrong_payload_type, s->rtp_timestamp_discontinuities, s->rtp_timestamp_gap_samples,
             s->mux_bytes_written, s->final_ok ? "CLOSED_COMPLETE" : "RECOVERY_REQUIRED",
             s->record_commands, s->pause_commands, s->keepalive_requests, s->media_intervals_started, s->media_intervals_closed,
             s->rtp_packets_ignored_not_recording, s->teardown_received, s->window_open_count, s->windows_closed_complete, s->rotations_completed, s->cfg.segment_sequence);
         if (host->session_count == 1) {
-            g_print("RECORDER SUMMARY packets_received=%llu packets_recorded=%llu payload_bytes=%llu sequence_gap_packets=%llu duplicates=%llu out_of_order=%llu malformed=%llu wrong_pt=%llu timestamp_discontinuities=%llu timestamp_gap_samples=%llu mux_bytes=%llu final=%s record_commands=%u pause_commands=%u keepalives=%u media_intervals_started=%u media_intervals_closed=%u packets_ignored_not_recording=%llu teardown=%d window_open_count=%d windows_closed_complete=%d rotations_completed=%d segment_sequence=%u\n",
-                s->rtp_packets_received, s->rtp_packets_recorded, s->rtp_payload_bytes_recorded, s->rtp_sequence_gap_packets,
+            g_print("RECORDER SUMMARY packets_received=%llu packets_recorded=%llu payload_bytes=%llu shared_samples_queued=%llu sequence_gap_packets=%llu duplicates=%llu out_of_order=%llu malformed=%llu wrong_pt=%llu timestamp_discontinuities=%llu timestamp_gap_samples=%llu mux_bytes=%llu final=%s record_commands=%u pause_commands=%u keepalives=%u media_intervals_started=%u media_intervals_closed=%u packets_ignored_not_recording=%llu teardown=%d window_open_count=%d windows_closed_complete=%d rotations_completed=%d segment_sequence=%u\n",
+                s->rtp_packets_received, s->rtp_packets_recorded, s->rtp_payload_bytes_recorded, s->shared_samples_queued, s->rtp_sequence_gap_packets,
                 s->rtp_packets_duplicate, s->rtp_packets_out_of_order, s->rtp_packets_malformed, s->rtp_packets_wrong_payload_type,
                 s->rtp_timestamp_discontinuities, s->rtp_timestamp_gap_samples, s->mux_bytes_written,
                 s->final_ok ? "CLOSED_COMPLETE" : "RECOVERY_REQUIRED", s->record_commands, s->pause_commands, s->keepalive_requests,
@@ -1986,12 +2813,464 @@ static void cleanup_host(RecorderHost *host) {
             s->rtp_socket = INVALID_SOCKET;
             destroy_pipeline(s);
         }
+        event_audio_buffer_free(&s->event_buffer);
     }
     if (host->cfg.shared_mxf_by_output) destroy_shared_groups(host);
     if (host->audit) fclose(host->audit);
     host->audit = NULL;
     DeleteCriticalSection(&host->audit_lock);
     WSACleanup();
+}
+
+static int event_scale_selftest(int argc, char **argv) {
+    const char *v;
+    int legs = 1000;
+    int buffer_ms = 4000;
+    int max_admission_ms = 2000;
+    int frames_per_leg;
+    int i, frame_index;
+    unsigned char payload[160];
+    EventAudioBuffer *buffers;
+    ULONGLONG admission_started, admission_ms, fill_started, fill_ms;
+    unsigned long long buffered_bytes;
+
+    if ((v = arg_value(argc, argv, "--legs")) != NULL) legs = atoi(v);
+    if ((v = arg_value(argc, argv, "--buffer-ms")) != NULL) buffer_ms = atoi(v);
+    if ((v = arg_value(argc, argv, "--max-admission-ms")) != NULL)
+        max_admission_ms = atoi(v);
+
+    if (legs <= 0 || legs > MAX_SESSIONS || legs > MAX_CLIENTS) {
+        g_printerr(
+            "EVENT SCALE SELFTEST invalid legs=%d MAX_SESSIONS=%d MAX_CLIENTS=%d\n",
+            legs, MAX_SESSIONS, MAX_CLIENTS);
+        return 21;
+    }
+    if (buffer_ms < 20 || buffer_ms > 8000 || max_admission_ms <= 0) {
+        g_printerr(
+            "EVENT SCALE SELFTEST invalid buffer_ms=%d max_admission_ms=%d\n",
+            buffer_ms, max_admission_ms);
+        return 22;
+    }
+
+    frames_per_leg = (buffer_ms + 19) / 20;
+    if (frames_per_leg > EVENT_AUDIO_BUFFER_FRAMES ||
+        (unsigned long long)frames_per_leg * sizeof(payload) >
+            EVENT_AUDIO_BUFFER_BYTES) {
+        g_printerr(
+            "EVENT SCALE SELFTEST requested buffer exceeds per-leg capacity "
+            "frames=%d bytes=%llu capacity_frames=%d capacity_bytes=%d\n",
+            frames_per_leg,
+            (unsigned long long)frames_per_leg * sizeof(payload),
+            EVENT_AUDIO_BUFFER_FRAMES,
+            EVENT_AUDIO_BUFFER_BYTES);
+        return 23;
+    }
+
+    buffers = (EventAudioBuffer *)calloc((size_t)legs, sizeof(EventAudioBuffer));
+    if (!buffers) {
+        g_printerr("EVENT SCALE SELFTEST could not allocate leg table\n");
+        return 24;
+    }
+    memset(payload, 0xD5, sizeof(payload));
+    for (i = 0; i < legs; i++) event_audio_buffer_init(&buffers[i]);
+
+    admission_started = GetTickCount64();
+    for (i = 0; i < legs; i++) {
+        if (!event_audio_buffer_push(
+                &buffers[i],
+                payload,
+                sizeof(payload),
+                0,
+                "2026-09-21T20:00:00.123Z")) {
+            g_printerr(
+                "EVENT SCALE SELFTEST first-frame admission failed leg=%d\n", i);
+            for (frame_index = 0; frame_index < legs; frame_index++)
+                event_audio_buffer_free(&buffers[frame_index]);
+            free(buffers);
+            return 25;
+        }
+    }
+    admission_ms = GetTickCount64() - admission_started;
+
+    fill_started = GetTickCount64();
+    for (frame_index = 1; frame_index < frames_per_leg; frame_index++) {
+        guint32 ts = (guint32)(frame_index * 160);
+        for (i = 0; i < legs; i++) {
+            if (!event_audio_buffer_push(
+                    &buffers[i],
+                    payload,
+                    sizeof(payload),
+                    ts,
+                    "2026-09-21T20:00:00.123Z")) {
+                g_printerr(
+                    "EVENT SCALE SELFTEST buffer fill failed leg=%d frame=%d\n",
+                    i, frame_index);
+                for (frame_index = 0; frame_index < legs; frame_index++)
+                    event_audio_buffer_free(&buffers[frame_index]);
+                free(buffers);
+                return 26;
+            }
+        }
+    }
+    fill_ms = GetTickCount64() - fill_started;
+
+    for (i = 0; i < legs; i++) {
+        if (buffers[i].frame_count != (unsigned int)frames_per_leg ||
+            buffers[i].used != (size_t)frames_per_leg * sizeof(payload) ||
+            strcmp(buffers[i].first_ingress_utc,
+                "2026-09-21T20:00:00.123Z") != 0) {
+            g_printerr(
+                "EVENT SCALE SELFTEST integrity mismatch leg=%d "
+                "frames=%u used=%zu first_ingress=%s\n",
+                i, buffers[i].frame_count, buffers[i].used,
+                buffers[i].first_ingress_utc);
+            for (frame_index = 0; frame_index < legs; frame_index++)
+                event_audio_buffer_free(&buffers[frame_index]);
+            free(buffers);
+            return 27;
+        }
+    }
+
+    buffered_bytes =
+        (unsigned long long)legs * (unsigned long long)frames_per_leg *
+        (unsigned long long)sizeof(payload);
+
+    g_print(
+        "EVENT SCALE SELFTEST: legs=%d admission_ms=%llu "
+        "buffer_ms=%d frames_per_leg=%d buffered_bytes=%llu fill_ms=%llu "
+        "threshold_ms=%d\n",
+        legs,
+        (unsigned long long)admission_ms,
+        buffer_ms,
+        frames_per_leg,
+        buffered_bytes,
+        (unsigned long long)fill_ms,
+        max_admission_ms);
+
+    for (i = 0; i < legs; i++) event_audio_buffer_free(&buffers[i]);
+    free(buffers);
+
+    if (admission_ms > (ULONGLONG)max_admission_ms) {
+        g_printerr(
+            "EVENT SCALE SELFTEST admission latency exceeded threshold "
+            "actual_ms=%llu threshold_ms=%d\n",
+            (unsigned long long)admission_ms, max_admission_ms);
+        return 28;
+    }
+
+    g_print("EVENT SCALE SELFTEST: PASS\n");
+    return 0;
+}
+
+static int event_file_burst_selftest(int argc, char **argv) {
+    const char *dll = arg_value(argc, argv, "--plugin-dll");
+    const char *output_root = arg_value(argc, argv, "--output-root");
+    const char *pcma_file = arg_value(argc, argv, "--pcma-file");
+    const char *v;
+    int legs = 1000;
+    int ring_ms = 10000;
+    int frame_bytes = 160;
+    RecorderHost *host = NULL;
+    FILE *audio_fp = NULL;
+    unsigned char *audio = NULL;
+    long audio_size_long;
+    size_t audio_size = 0;
+    size_t offset;
+    int i, ok = 1, completed = 0;
+    char error_text[1024] = {0};
+    char audit_path[EVENT_FILE_PATH_MAX];
+    char media_start_utc[64];
+    char interaction_id[128];
+    ULONGLONG fill_started, fill_ms, materialize_started, materialize_ms;
+    unsigned long long total_final_bytes = 0;
+    unsigned long long expected_payload_bytes;
+
+    if ((v = arg_value(argc, argv, "--legs")) != NULL) legs = atoi(v);
+    if ((v = arg_value(argc, argv, "--ring-ms")) != NULL) ring_ms = atoi(v);
+
+    if (!dll || !*dll || !output_root || !*output_root || !pcma_file || !*pcma_file) {
+        g_printerr(
+            "event-file-burst-selftest requires --plugin-dll DLL "
+            "--output-root DIR --pcma-file FILE "
+            "[--legs N] [--ring-ms N]\n");
+        return 31;
+    }
+    if (legs <= 0 || legs > MAX_SESSIONS) {
+        g_printerr("EVENT FILE BURST invalid legs=%d MAX_SESSIONS=%d\n",
+            legs, MAX_SESSIONS);
+        return 32;
+    }
+    if (ring_ms <= 0 || (ring_ms % 20) != 0) {
+        g_printerr("EVENT FILE BURST ring-ms must be a positive multiple of 20\n");
+        return 33;
+    }
+
+    expected_payload_bytes =
+        ((unsigned long long)ring_ms * 8000ULL) / 1000ULL;
+    if (expected_payload_bytes > EVENT_AUDIO_BUFFER_BYTES) {
+        g_printerr(
+            "EVENT FILE BURST ring payload exceeds per-leg buffer "
+            "bytes=%llu capacity=%d\n",
+            expected_payload_bytes, EVENT_AUDIO_BUFFER_BYTES);
+        return 34;
+    }
+
+    audio_fp = fopen(pcma_file, "rb");
+    if (!audio_fp) {
+        g_printerr("EVENT FILE BURST could not open PCMA source: %s\n", pcma_file);
+        return 35;
+    }
+    if (fseek(audio_fp, 0, SEEK_END) != 0) {
+        fclose(audio_fp);
+        return 36;
+    }
+    audio_size_long = ftell(audio_fp);
+    if (audio_size_long <= 0 ||
+        (unsigned long long)audio_size_long != expected_payload_bytes) {
+        g_printerr(
+            "EVENT FILE BURST PCMA source size mismatch actual=%ld expected=%llu\n",
+            audio_size_long, expected_payload_bytes);
+        fclose(audio_fp);
+        return 37;
+    }
+    rewind(audio_fp);
+    audio_size = (size_t)audio_size_long;
+    audio = (unsigned char *)malloc(audio_size);
+    if (!audio || fread(audio, 1, audio_size, audio_fp) != audio_size) {
+        g_printerr("EVENT FILE BURST could not read PCMA source\n");
+        if (audio) free(audio);
+        fclose(audio_fp);
+        return 38;
+    }
+    fclose(audio_fp);
+    audio_fp = NULL;
+
+    if (!event_file_manager_ensure_directory(
+            output_root, error_text, sizeof(error_text))) {
+        g_printerr("EVENT FILE BURST output directory failed: %s\n", error_text);
+        free(audio);
+        return 39;
+    }
+
+    host = (RecorderHost *)calloc(1, sizeof(RecorderHost));
+    if (!host) {
+        g_printerr("EVENT FILE BURST could not allocate recorder host\n");
+        free(audio);
+        return 40;
+    }
+    host->listen_socket = INVALID_SOCKET;
+    host->cfg.event_files_mode = 1;
+    safe_copy(host->cfg.recording_root,
+        sizeof(host->cfg.recording_root), output_root);
+    safe_copy(host->cfg.recorder_id,
+        sizeof(host->cfg.recorder_id), "RECORDER-BURST-1000");
+    host->session_count = legs;
+    InitializeCriticalSection(&host->audit_lock);
+
+    snprintf(audit_path, sizeof(audit_path), "%s\\burst-audit.jsonl", output_root);
+    host->audit = fopen(audit_path, "wb");
+    if (!host->audit) {
+        g_printerr("EVENT FILE BURST could not open audit: %s\n", audit_path);
+        DeleteCriticalSection(&host->audit_lock);
+        free(host);
+        free(audio);
+        return 41;
+    }
+
+    if (!load_identity_plugin(dll)) {
+        g_printerr("EVENT FILE BURST could not load identity plugin\n");
+        fclose(host->audit);
+        DeleteCriticalSection(&host->audit_lock);
+        free(host);
+        free(audio);
+        return 42;
+    }
+
+    storage_utc_now(media_start_utc, sizeof(media_start_utc));
+    make_guid_string(interaction_id, sizeof(interaction_id));
+
+    fill_started = GetTickCount64();
+    for (i = 0; i < legs; i++) {
+        RecorderSession *session = &host->sessions[i];
+        guint32 rtp_timestamp = 0;
+
+        session->host = host;
+        session->rtp_socket = INVALID_SOCKET;
+        session->client_index = -1;
+        session->track_index = i;
+        storage_writer_init(&session->writer);
+        event_audio_buffer_init(&session->event_buffer);
+
+        snprintf(session->session_id, sizeof(session->session_id),
+            "BURST-%04d", i + 1);
+        snprintf(session->cfg.route_key, sizeof(session->cfg.route_key),
+            "/burst/CWP-%04d/ring", i + 1);
+        snprintf(session->cfg.endpoint_id, sizeof(session->cfg.endpoint_id),
+            "CWP-%04d", i + 1);
+        safe_copy(session->cfg.service_id,
+            sizeof(session->cfg.service_id), "BURST-RING");
+        safe_copy(session->cfg.media_flow,
+            sizeof(session->cfg.media_flow), "mono");
+        safe_copy(session->cfg.activity_signal,
+            sizeof(session->cfg.activity_signal), "none");
+        snprintf(session->cfg.display_name, sizeof(session->cfg.display_name),
+            "BURST RING CWP-%04d", i + 1);
+        make_guid_string(session->cfg.logical_uuid,
+            sizeof(session->cfg.logical_uuid));
+        make_guid_string(session->cfg.instance_uuid,
+            sizeof(session->cfg.instance_uuid));
+        safe_copy(session->cfg.session_kind,
+            sizeof(session->cfg.session_kind), "telephone");
+        safe_copy(session->interaction_id,
+            sizeof(session->interaction_id), interaction_id);
+        make_guid_string(session->leg_id, sizeof(session->leg_id));
+        safe_copy(session->event_media_start_utc,
+            sizeof(session->event_media_start_utc), media_start_utc);
+        safe_copy(session->event_state,
+            sizeof(session->event_state), "RINGING");
+        session->recording = 1;
+        session->service_enabled = 1;
+        session->record_commands = 1;
+
+        for (offset = 0; offset < audio_size; offset += (size_t)frame_bytes) {
+            unsigned int chunk = (unsigned int)(
+                (audio_size - offset) < (size_t)frame_bytes
+                    ? (audio_size - offset)
+                    : (size_t)frame_bytes);
+            if (!event_audio_buffer_push(
+                    &session->event_buffer,
+                    audio + offset,
+                    chunk,
+                    rtp_timestamp,
+                    media_start_utc)) {
+                g_printerr(
+                    "EVENT FILE BURST buffer fill failed leg=%d offset=%zu\n",
+                    i + 1, offset);
+                ok = 0;
+                break;
+            }
+            rtp_timestamp += chunk;
+        }
+        if (!ok) break;
+        session->event_materialize_requested = 1;
+    }
+    fill_ms = GetTickCount64() - fill_started;
+
+    if (ok) {
+        g_print(
+            "EVENT FILE BURST BUFFERED legs=%d ring_ms=%d "
+            "payload_per_leg=%zu total_payload_bytes=%llu fill_ms=%llu "
+            "media_start_utc=%s interaction=%s\n",
+            legs, ring_ms, audio_size,
+            (unsigned long long)audio_size * (unsigned long long)legs,
+            (unsigned long long)fill_ms,
+            media_start_utc, interaction_id);
+    }
+
+    materialize_started = GetTickCount64();
+    for (i = 0; ok && i < legs; i++) {
+        RecorderSession *session = &host->sessions[i];
+        WIN32_FILE_ATTRIBUTE_DATA file_data;
+        unsigned long long final_bytes;
+
+        if (!materialize_event_buffer(session)) {
+            g_printerr(
+                "EVENT FILE BURST materialization failed leg=%d\n", i + 1);
+            ok = 0;
+            break;
+        }
+        if (session->rtp_payload_bytes_recorded !=
+            (unsigned long long)audio_size) {
+            g_printerr(
+                "EVENT FILE BURST recorded payload mismatch leg=%d "
+                "actual=%llu expected=%zu\n",
+                i + 1, session->rtp_payload_bytes_recorded, audio_size);
+            ok = 0;
+            break;
+        }
+
+        safe_copy(session->event_state,
+            sizeof(session->event_state), "RING_NOT_ANSWERED");
+        request_event_file_close(
+            session,
+            "Synthetic 10-second RING completed without answer",
+            NULL);
+        if (!close_event_file_now(
+                session, "Synthetic 10-second RING materialized")) {
+            g_printerr(
+                "EVENT FILE BURST close failed leg=%d\n", i + 1);
+            ok = 0;
+            break;
+        }
+
+        if (!GetFileAttributesExA(
+                session->cfg.output_final,
+                GetFileExInfoStandard,
+                &file_data)) {
+            g_printerr(
+                "EVENT FILE BURST final MXF missing leg=%d path=%s\n",
+                i + 1, session->cfg.output_final);
+            ok = 0;
+            break;
+        }
+        final_bytes =
+            ((unsigned long long)file_data.nFileSizeHigh << 32) |
+            (unsigned long long)file_data.nFileSizeLow;
+        if (final_bytes <= (unsigned long long)audio_size) {
+            g_printerr(
+                "EVENT FILE BURST final MXF too small leg=%d "
+                "file_bytes=%llu payload_bytes=%zu\n",
+                i + 1, final_bytes, audio_size);
+            ok = 0;
+            break;
+        }
+
+        total_final_bytes += final_bytes;
+        completed++;
+        session->finalized = 1;
+        session->final_ok = 1;
+        event_audio_buffer_free(&session->event_buffer);
+
+        if (completed == 1 || completed % 100 == 0 || completed == legs) {
+            g_print(
+                "EVENT FILE BURST PROGRESS files=%d/%d elapsed_ms=%llu "
+                "last_file_bytes=%llu\n",
+                completed, legs,
+                (unsigned long long)(GetTickCount64() - materialize_started),
+                final_bytes);
+        }
+    }
+    materialize_ms = GetTickCount64() - materialize_started;
+
+    if (!ok) {
+        for (i = 0; i < legs; i++) {
+            RecorderSession *session = &host->sessions[i];
+            if (session->pipeline)
+                gst_element_set_state(session->pipeline, GST_STATE_NULL);
+            if (session->event_file_open)
+                storage_writer_abort(&session->writer);
+            destroy_pipeline(session);
+            event_audio_buffer_free(&session->event_buffer);
+        }
+    } else {
+        g_print(
+            "EVENT FILE BURST: PASS files=%d ring_ms=%d "
+            "payload_per_file=%zu total_payload_bytes=%llu "
+            "total_mxf_bytes=%llu buffer_fill_ms=%llu materialize_ms=%llu "
+            "media_start_utc=%s interaction=%s root=%s\n",
+            completed, ring_ms, audio_size,
+            (unsigned long long)audio_size * (unsigned long long)legs,
+            total_final_bytes,
+            (unsigned long long)fill_ms,
+            (unsigned long long)materialize_ms,
+            media_start_utc, interaction_id, output_root);
+    }
+
+    if (host->audit) fclose(host->audit);
+    DeleteCriticalSection(&host->audit_lock);
+    free(host);
+    free(audio);
+    return ok && completed == legs ? 0 : 43;
 }
 
 static int selftest(int argc, char **argv) {
@@ -2028,9 +3307,15 @@ int main(int argc, char **argv) {
     for (i = 0; i < MAX_CLIENTS; i++) host.clients[i].socket = INVALID_SOCKET;
     for (i = 0; i < MAX_SESSIONS; i++) host.sessions[i].rtp_socket = INVALID_SOCKET;
     gst_init(&argc, &argv);
+    if (has_arg(argc, argv, "event-file-burst-selftest") ||
+        (argc > 1 && strcmp(argv[1], "event-file-burst-selftest") == 0))
+        return event_file_burst_selftest(argc, argv);
+    if (has_arg(argc, argv, "event-scale-selftest") ||
+        (argc > 1 && strcmp(argv[1], "event-scale-selftest") == 0))
+        return event_scale_selftest(argc, argv);
     if (has_arg(argc, argv, "selftest") || (argc > 1 && strcmp(argv[1], "selftest") == 0)) return selftest(argc, argv);
     if (!parse_host_config(argc, argv, &host)) {
-        g_printerr("Usage multi: recorder-host --bind-ip IP --rtsp-port PORT --session-map sessions.tsv --audit audit.jsonl --plugin-dll gstmxfidentity.dll [--ready-file FILE] [--recorder-id ID] [--max-seconds N] [--rotate-window-after-pauses N --rotate-window-max-count N] [--shared-mxf-by-output] [--topology-watch-file FILE --topology-revision N] [--shutdown-watch-file FILE]\n");
+        g_printerr("Usage multi: recorder-host --bind-ip IP --rtsp-port PORT --session-map sessions.tsv --audit audit.jsonl --plugin-dll gstmxfidentity.dll [--ready-file FILE] [--recorder-id ID] [--max-seconds N] [--rotate-window-after-pauses N --rotate-window-max-count N] [--shared-mxf-by-output | --event-files --recording-root DIR] [--topology-watch-file FILE --topology-revision N] [--shutdown-watch-file FILE]\n");
         g_printerr("Legacy single-session arguments from Phase 3/4 remain supported when --session-map is omitted.\n");
         return 2;
     }
