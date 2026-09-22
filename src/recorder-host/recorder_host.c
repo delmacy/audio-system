@@ -2906,6 +2906,317 @@ static int event_scale_selftest(int argc, char **argv) {
     return 0;
 }
 
+static int event_file_burst_selftest(int argc, char **argv) {
+    const char *dll = arg_value(argc, argv, "--plugin-dll");
+    const char *output_root = arg_value(argc, argv, "--output-root");
+    const char *pcma_file = arg_value(argc, argv, "--pcma-file");
+    const char *v;
+    int legs = 1000;
+    int ring_ms = 10000;
+    int frame_bytes = 160;
+    RecorderHost *host = NULL;
+    FILE *audio_fp = NULL;
+    unsigned char *audio = NULL;
+    long audio_size_long;
+    size_t audio_size = 0;
+    size_t offset;
+    int i, ok = 1, completed = 0;
+    char error_text[1024] = {0};
+    char audit_path[EVENT_FILE_PATH_MAX];
+    char media_start_utc[64];
+    char interaction_id[128];
+    ULONGLONG fill_started, fill_ms, materialize_started, materialize_ms;
+    unsigned long long total_final_bytes = 0;
+    unsigned long long expected_payload_bytes;
+
+    if ((v = arg_value(argc, argv, "--legs")) != NULL) legs = atoi(v);
+    if ((v = arg_value(argc, argv, "--ring-ms")) != NULL) ring_ms = atoi(v);
+
+    if (!dll || !*dll || !output_root || !*output_root || !pcma_file || !*pcma_file) {
+        g_printerr(
+            "event-file-burst-selftest requires --plugin-dll DLL "
+            "--output-root DIR --pcma-file FILE "
+            "[--legs N] [--ring-ms N]\n");
+        return 31;
+    }
+    if (legs <= 0 || legs > MAX_SESSIONS) {
+        g_printerr("EVENT FILE BURST invalid legs=%d MAX_SESSIONS=%d\n",
+            legs, MAX_SESSIONS);
+        return 32;
+    }
+    if (ring_ms <= 0 || (ring_ms % 20) != 0) {
+        g_printerr("EVENT FILE BURST ring-ms must be a positive multiple of 20\n");
+        return 33;
+    }
+
+    expected_payload_bytes =
+        ((unsigned long long)ring_ms * 8000ULL) / 1000ULL;
+    if (expected_payload_bytes > EVENT_AUDIO_BUFFER_BYTES) {
+        g_printerr(
+            "EVENT FILE BURST ring payload exceeds per-leg buffer "
+            "bytes=%llu capacity=%d\n",
+            expected_payload_bytes, EVENT_AUDIO_BUFFER_BYTES);
+        return 34;
+    }
+
+    audio_fp = fopen(pcma_file, "rb");
+    if (!audio_fp) {
+        g_printerr("EVENT FILE BURST could not open PCMA source: %s\n", pcma_file);
+        return 35;
+    }
+    if (fseek(audio_fp, 0, SEEK_END) != 0) {
+        fclose(audio_fp);
+        return 36;
+    }
+    audio_size_long = ftell(audio_fp);
+    if (audio_size_long <= 0 ||
+        (unsigned long long)audio_size_long != expected_payload_bytes) {
+        g_printerr(
+            "EVENT FILE BURST PCMA source size mismatch actual=%ld expected=%llu\n",
+            audio_size_long, expected_payload_bytes);
+        fclose(audio_fp);
+        return 37;
+    }
+    rewind(audio_fp);
+    audio_size = (size_t)audio_size_long;
+    audio = (unsigned char *)malloc(audio_size);
+    if (!audio || fread(audio, 1, audio_size, audio_fp) != audio_size) {
+        g_printerr("EVENT FILE BURST could not read PCMA source\n");
+        if (audio) free(audio);
+        fclose(audio_fp);
+        return 38;
+    }
+    fclose(audio_fp);
+    audio_fp = NULL;
+
+    if (!event_file_manager_ensure_directory(
+            output_root, error_text, sizeof(error_text))) {
+        g_printerr("EVENT FILE BURST output directory failed: %s\n", error_text);
+        free(audio);
+        return 39;
+    }
+
+    host = (RecorderHost *)calloc(1, sizeof(RecorderHost));
+    if (!host) {
+        g_printerr("EVENT FILE BURST could not allocate recorder host\n");
+        free(audio);
+        return 40;
+    }
+    host->listen_socket = INVALID_SOCKET;
+    host->cfg.event_files_mode = 1;
+    safe_copy(host->cfg.recording_root,
+        sizeof(host->cfg.recording_root), output_root);
+    safe_copy(host->cfg.recorder_id,
+        sizeof(host->cfg.recorder_id), "RECORDER-BURST-1000");
+    host->session_count = legs;
+    InitializeCriticalSection(&host->audit_lock);
+
+    snprintf(audit_path, sizeof(audit_path), "%s\\burst-audit.jsonl", output_root);
+    host->audit = fopen(audit_path, "wb");
+    if (!host->audit) {
+        g_printerr("EVENT FILE BURST could not open audit: %s\n", audit_path);
+        DeleteCriticalSection(&host->audit_lock);
+        free(host);
+        free(audio);
+        return 41;
+    }
+
+    if (!load_identity_plugin(dll)) {
+        g_printerr("EVENT FILE BURST could not load identity plugin\n");
+        fclose(host->audit);
+        DeleteCriticalSection(&host->audit_lock);
+        free(host);
+        free(audio);
+        return 42;
+    }
+
+    storage_utc_now(media_start_utc, sizeof(media_start_utc));
+    make_guid_string(interaction_id, sizeof(interaction_id));
+
+    fill_started = GetTickCount64();
+    for (i = 0; i < legs; i++) {
+        RecorderSession *session = &host->sessions[i];
+        guint32 rtp_timestamp = 0;
+
+        session->host = host;
+        session->rtp_socket = INVALID_SOCKET;
+        session->client_index = -1;
+        session->track_index = i;
+        storage_writer_init(&session->writer);
+        event_audio_buffer_init(&session->event_buffer);
+
+        snprintf(session->session_id, sizeof(session->session_id),
+            "BURST-%04d", i + 1);
+        snprintf(session->cfg.route_key, sizeof(session->cfg.route_key),
+            "/burst/CWP-%04d/ring", i + 1);
+        snprintf(session->cfg.endpoint_id, sizeof(session->cfg.endpoint_id),
+            "CWP-%04d", i + 1);
+        safe_copy(session->cfg.service_id,
+            sizeof(session->cfg.service_id), "BURST-RING");
+        safe_copy(session->cfg.media_flow,
+            sizeof(session->cfg.media_flow), "mono");
+        safe_copy(session->cfg.activity_signal,
+            sizeof(session->cfg.activity_signal), "none");
+        snprintf(session->cfg.display_name, sizeof(session->cfg.display_name),
+            "BURST RING CWP-%04d", i + 1);
+        make_guid_string(session->cfg.logical_uuid,
+            sizeof(session->cfg.logical_uuid));
+        make_guid_string(session->cfg.instance_uuid,
+            sizeof(session->cfg.instance_uuid));
+        safe_copy(session->cfg.session_kind,
+            sizeof(session->cfg.session_kind), "telephone");
+        safe_copy(session->interaction_id,
+            sizeof(session->interaction_id), interaction_id);
+        make_guid_string(session->leg_id, sizeof(session->leg_id));
+        safe_copy(session->event_media_start_utc,
+            sizeof(session->event_media_start_utc), media_start_utc);
+        safe_copy(session->event_state,
+            sizeof(session->event_state), "RINGING");
+        session->recording = 1;
+        session->service_enabled = 1;
+        session->record_commands = 1;
+
+        for (offset = 0; offset < audio_size; offset += (size_t)frame_bytes) {
+            unsigned int chunk = (unsigned int)(
+                (audio_size - offset) < (size_t)frame_bytes
+                    ? (audio_size - offset)
+                    : (size_t)frame_bytes);
+            if (!event_audio_buffer_push(
+                    &session->event_buffer,
+                    audio + offset,
+                    chunk,
+                    rtp_timestamp,
+                    media_start_utc)) {
+                g_printerr(
+                    "EVENT FILE BURST buffer fill failed leg=%d offset=%zu\n",
+                    i + 1, offset);
+                ok = 0;
+                break;
+            }
+            rtp_timestamp += chunk;
+        }
+        if (!ok) break;
+        session->event_materialize_requested = 1;
+    }
+    fill_ms = GetTickCount64() - fill_started;
+
+    if (ok) {
+        g_print(
+            "EVENT FILE BURST BUFFERED legs=%d ring_ms=%d "
+            "payload_per_leg=%zu total_payload_bytes=%llu fill_ms=%llu "
+            "media_start_utc=%s interaction=%s\n",
+            legs, ring_ms, audio_size,
+            (unsigned long long)audio_size * (unsigned long long)legs,
+            (unsigned long long)fill_ms,
+            media_start_utc, interaction_id);
+    }
+
+    materialize_started = GetTickCount64();
+    for (i = 0; ok && i < legs; i++) {
+        RecorderSession *session = &host->sessions[i];
+        WIN32_FILE_ATTRIBUTE_DATA file_data;
+        unsigned long long final_bytes;
+
+        if (!materialize_event_buffer(session)) {
+            g_printerr(
+                "EVENT FILE BURST materialization failed leg=%d\n", i + 1);
+            ok = 0;
+            break;
+        }
+        if (session->rtp_payload_bytes_recorded !=
+            (unsigned long long)audio_size) {
+            g_printerr(
+                "EVENT FILE BURST recorded payload mismatch leg=%d "
+                "actual=%llu expected=%zu\n",
+                i + 1, session->rtp_payload_bytes_recorded, audio_size);
+            ok = 0;
+            break;
+        }
+
+        safe_copy(session->event_state,
+            sizeof(session->event_state), "RING_NOT_ANSWERED");
+        request_event_file_close(
+            session,
+            "Synthetic 10-second RING completed without answer",
+            NULL);
+        if (!close_event_file_now(
+                session, "Synthetic 10-second RING materialized")) {
+            g_printerr(
+                "EVENT FILE BURST close failed leg=%d\n", i + 1);
+            ok = 0;
+            break;
+        }
+
+        if (!GetFileAttributesExA(
+                session->cfg.output_final,
+                GetFileExInfoStandard,
+                &file_data)) {
+            g_printerr(
+                "EVENT FILE BURST final MXF missing leg=%d path=%s\n",
+                i + 1, session->cfg.output_final);
+            ok = 0;
+            break;
+        }
+        final_bytes =
+            ((unsigned long long)file_data.nFileSizeHigh << 32) |
+            (unsigned long long)file_data.nFileSizeLow;
+        if (final_bytes <= (unsigned long long)audio_size) {
+            g_printerr(
+                "EVENT FILE BURST final MXF too small leg=%d "
+                "file_bytes=%llu payload_bytes=%zu\n",
+                i + 1, final_bytes, audio_size);
+            ok = 0;
+            break;
+        }
+
+        total_final_bytes += final_bytes;
+        completed++;
+        session->finalized = 1;
+        session->final_ok = 1;
+        event_audio_buffer_free(&session->event_buffer);
+
+        if (completed == 1 || completed % 100 == 0 || completed == legs) {
+            g_print(
+                "EVENT FILE BURST PROGRESS files=%d/%d elapsed_ms=%llu "
+                "last_file_bytes=%llu\n",
+                completed, legs,
+                (unsigned long long)(GetTickCount64() - materialize_started),
+                final_bytes);
+        }
+    }
+    materialize_ms = GetTickCount64() - materialize_started;
+
+    if (!ok) {
+        for (i = 0; i < legs; i++) {
+            RecorderSession *session = &host->sessions[i];
+            if (session->pipeline)
+                gst_element_set_state(session->pipeline, GST_STATE_NULL);
+            if (session->event_file_open)
+                storage_writer_abort(&session->writer);
+            destroy_pipeline(session);
+            event_audio_buffer_free(&session->event_buffer);
+        }
+    } else {
+        g_print(
+            "EVENT FILE BURST: PASS files=%d ring_ms=%d "
+            "payload_per_file=%zu total_payload_bytes=%llu "
+            "total_mxf_bytes=%llu buffer_fill_ms=%llu materialize_ms=%llu "
+            "media_start_utc=%s interaction=%s root=%s\n",
+            completed, ring_ms, audio_size,
+            (unsigned long long)audio_size * (unsigned long long)legs,
+            total_final_bytes,
+            (unsigned long long)fill_ms,
+            (unsigned long long)materialize_ms,
+            media_start_utc, interaction_id, output_root);
+    }
+
+    if (host->audit) fclose(host->audit);
+    DeleteCriticalSection(&host->audit_lock);
+    free(host);
+    free(audio);
+    return ok && completed == legs ? 0 : 43;
+}
+
 static int selftest(int argc, char **argv) {
     const char *dll = arg_value(argc, argv, "--plugin-dll");
     const char *required[] = {"appsrc", "appsink", NULL};
@@ -2940,6 +3251,9 @@ int main(int argc, char **argv) {
     for (i = 0; i < MAX_CLIENTS; i++) host.clients[i].socket = INVALID_SOCKET;
     for (i = 0; i < MAX_SESSIONS; i++) host.sessions[i].rtp_socket = INVALID_SOCKET;
     gst_init(&argc, &argv);
+    if (has_arg(argc, argv, "event-file-burst-selftest") ||
+        (argc > 1 && strcmp(argv[1], "event-file-burst-selftest") == 0))
+        return event_file_burst_selftest(argc, argv);
     if (has_arg(argc, argv, "event-scale-selftest") ||
         (argc > 1 && strcmp(argv[1], "event-scale-selftest") == 0))
         return event_scale_selftest(argc, argv);
