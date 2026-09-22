@@ -173,7 +173,28 @@ try {
         if (-not [string]$open.media_start_utc) {
             throw 'EVENT_FILE_OPEN missing media_start_utc.'
         }
-        $mediaStart = [DateTimeOffset]::Parse([string]$open.media_start_utc)
+        $rawMediaStart = $open.media_start_utc
+        if ($rawMediaStart -is [DateTimeOffset]) {
+            $mediaStart = $rawMediaStart.ToUniversalTime()
+        }
+        elseif ($rawMediaStart -is [DateTime]) {
+            $utcDateTime = $rawMediaStart
+            if ($utcDateTime.Kind -ne [DateTimeKind]::Utc) {
+                $utcDateTime = [DateTime]::SpecifyKind($utcDateTime, [DateTimeKind]::Utc)
+            }
+            $mediaStart = [DateTimeOffset]::new($utcDateTime)
+        }
+        else {
+            $mediaStart = [DateTimeOffset]::MinValue
+            $styles = [Globalization.DateTimeStyles]::AssumeUniversal -bor [Globalization.DateTimeStyles]::AdjustToUniversal
+            if (-not [DateTimeOffset]::TryParse(
+                    [string]$rawMediaStart,
+                    [Globalization.CultureInfo]::InvariantCulture,
+                    $styles,
+                    [ref]$mediaStart)) {
+                throw "EVENT_FILE_OPEN has invalid media_start_utc: $rawMediaStart"
+            }
+        }
         $expectedDir = $recordingRoot
         foreach ($part in @(
             $mediaStart.ToString('yyyy'),
