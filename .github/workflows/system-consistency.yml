@@ -81,6 +81,7 @@ jobs:
             './scripts/recorder/Invoke-GrowingMxfCiSmoke.ps1',
             './scripts/recorder/Invoke-EventFileCiSmoke.ps1',
             './scripts/recorder/Invoke-EventRouteCapacityCiSmoke.ps1',
+            './scripts/recorder/Invoke-EventFileBurstCiSmoke.ps1',
             './scripts/recorder/Start-EventRecorderLab.ps1'
           )) {
             $tokens = $null
@@ -273,6 +274,11 @@ jobs:
         shell: pwsh
         run: ./scripts/recorder/Invoke-EventRouteCapacityCiSmoke.ps1 -SessionCount 1000
 
+      - name: Event-file 1000 x 10s ring materialization
+        if: contains(github.event.head_commit.message, '[burst1000]')
+        shell: pwsh
+        run: ./scripts/recorder/Invoke-EventFileBurstCiSmoke.ps1 -LegCount 1000 -RingSeconds 10 -ToneHz 440
+
       - name: Upload native E2E diagnostics
         if: failure()
         uses: actions/upload-artifact@v4
@@ -282,5 +288,6 @@ jobs:
             runs/operational-recorder/**
             runs/event-recorder/**
             runs/event-capacity/**
+            runs/event-burst/**
           if-no-files-found: ignore
           retention-days: 3
