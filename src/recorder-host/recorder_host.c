@@ -1341,6 +1341,49 @@ static int process_event_materializations(RecorderHost *host, int budget) {
     return 1;
 }
 
+static int drain_pending_event_rtp(RecorderSession *session, int max_packets) {
+    int drained = 0;
+    if (!session || session->rtp_socket == INVALID_SOCKET) return 1;
+    if (max_packets <= 0) max_packets = 8192;
+
+    while (drained < max_packets) {
+        fd_set readfds;
+        struct timeval tv;
+        unsigned char packet[RTP_PACKET_MAX];
+        int selected, n;
+
+        FD_ZERO(&readfds);
+        FD_SET(session->rtp_socket, &readfds);
+        tv.tv_sec = 0;
+        tv.tv_usec = 0;
+        selected = select(0, &readfds, NULL, NULL, &tv);
+        if (selected == SOCKET_ERROR) {
+            audit_event(session->host, session, "INTEGRITY_FAILURE",
+                "select() failed while draining pending RTP before event close");
+            return 0;
+        }
+        if (selected == 0 || !FD_ISSET(session->rtp_socket, &readfds))
+            break;
+
+        n = recvfrom(session->rtp_socket, (char *)packet,
+            sizeof(packet), 0, NULL, NULL);
+        if (n <= 0)
+            break;
+        if (!handle_rtp_packet(session, packet, n))
+            return 0;
+        drained++;
+    }
+
+    if (drained > 0) {
+        char detail[256];
+        snprintf(detail, sizeof(detail),
+            "Drained pending RTP packets before event close packets=%d",
+            drained);
+        audit_event(session->host, session, "RTP_DRAIN_BEFORE_CLOSE", detail);
+    }
+    return 1;
+}
+
 static void request_event_file_close(
     RecorderSession *session,
     const char *reason,
@@ -1354,6 +1397,19 @@ static void request_event_file_close(
     else
         storage_utc_now(session->event_last_event_utc,
             sizeof(session->event_last_event_utc));
+
+    /*
+     * RTSP control and UDP media are multiplexed by the same host loop.
+     * A HANGUP/PAUSE/TEARDOWN request can therefore be serviced while RTP
+     * datagrams that arrived earlier are still queued in the UDP socket.
+     * Drain those already-arrived datagrams while the media gate is still
+     * open so control-plane ordering cannot discard accepted media.
+     */
+    if (session->recording &&
+        !drain_pending_event_rtp(session, 8192)) {
+        audit_event(session->host, session, "INTEGRITY_FAILURE",
+            "Could not drain pending RTP before event close");
+    }
 
     session->recording = 0;
     if (session->media_active) {
