@@ -4,7 +4,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define EVENT_AUDIO_BUFFER_BYTES 65536
+#define EVENT_AUDIO_BUFFER_BYTES 131072
 #define EVENT_AUDIO_BUFFER_FRAMES 1024
 
 typedef struct EventAudioFrame {
